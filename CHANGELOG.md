@@ -6,6 +6,15 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- A golden test pins the `--json` snapshot schema, so an accidental change to the
+  machine-readable output (a field added, removed, renamed, or reformatted) fails
+  CI. Regenerate deliberately with `-update-golden`.
+
+### Fixed
+- llama.cpp model names on Windows showed the full path (`path.Base` doesn't split
+  on `\`); now the basename is shown. Found while validating against a real GGUF.
+
 ### Documentation
 - `docs/VALIDATION.md`: end-to-end real-hardware validation (AMD RX 7900 XT +
   Ollama on Windows). Device VRAM matches the registry/counter, the weights/KV

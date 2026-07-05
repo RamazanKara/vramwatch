@@ -234,8 +234,9 @@ declared; it means:
 - [x] Ollama (0.31.1) and llama.cpp (b9873, a real GGUF via Vulkan) both confirmed
       on real hardware, agreeing on the same model's split via independent code paths
       (`/api/show` vs. direct GGUF parsing). One more loader (vLLM) is still wanted.
-- [ ] The `--json` schema and CLI held stable across a few releases with no breaking
-      changes, and enough real-world use to trust the estimates in the field.
+- [~] The `--json` schema and CLI held stable across a few releases. A golden test
+      now pins the exact `--json` output, so an accidental schema change fails CI;
+      the "stable across several releases + real-world use" part is time-based.
 - [ ] The headline accuracy roadmap item landed (allocator-level or
       cross-checked attribution, so “estimated” becomes “measured”).
 

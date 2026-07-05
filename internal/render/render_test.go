@@ -1,13 +1,49 @@
 package render
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/RamazanKara/vramwatch/internal/model"
 )
+
+var updateGolden = flag.Bool("update-golden", false, "rewrite the JSON schema golden file")
+
+// TestJSONSchemaStable pins the exact `--json` output for a fixed snapshot. Any
+// change to the machine-readable schema (a field added, removed, renamed, or
+// reformatted) fails this test, so a breaking change to the JSON contract can't
+// land unnoticed. If a change is intentional, regenerate the golden:
+//
+//	go test ./internal/render -run JSONSchemaStable -update-golden
+func TestJSONSchemaStable(t *testing.T) {
+	data, err := JSON(sampleSnap()) // sampleSnap is fully deterministic
+	if err != nil {
+		t.Fatal(err)
+	}
+	const golden = "testdata/snapshot.golden.json"
+	if *updateGolden {
+		if err := os.MkdirAll("testdata", 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(golden, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read golden (generate it with -update-golden): %v", err)
+	}
+	if !bytes.Equal(data, want) {
+		t.Errorf("--json schema changed. If this is intentional, regenerate the golden:\n"+
+			"  go test ./internal/render -run JSONSchemaStable -update-golden\n\ngot:\n%s", data)
+	}
+}
 
 func sampleSnap() model.Snapshot {
 	return model.Snapshot{

@@ -1,0 +1,67 @@
+{
+  "vramwatch_version": "v0.1.0",
+  "host": "bench",
+  "breakdowns": [
+    {
+      "gpu": {
+        "index": 0,
+        "name": "AMD Radeon RX 7900 XTX",
+        "vendor": "amd",
+        "driver": "6.10.5",
+        "total_bytes": 25769803776,
+        "used_bytes": 0,
+        "free_bytes": 0
+      },
+      "segments": [
+        {
+          "kind": "weights",
+          "label": "weights",
+          "bytes": 20937965568,
+          "source": "ollama",
+          "estimated": true
+        },
+        {
+          "kind": "kv_cache",
+          "label": "KV cache",
+          "bytes": 2684354560,
+          "source": "ollama",
+          "estimated": true
+        },
+        {
+          "kind": "other_process",
+          "label": "other apps",
+          "bytes": 1879048192,
+          "source": ""
+        },
+        {
+          "kind": "free",
+          "label": "free",
+          "bytes": 268435456,
+          "source": ""
+        }
+      ],
+      "models": [
+        {
+          "loader": "ollama",
+          "name": "llama3:70b-q2_K",
+          "gpu_index": 0,
+          "vram_bytes": 0,
+          "context_tokens": 8192,
+          "context_max": 8192,
+          "arch": {}
+        }
+      ],
+      "prediction": {
+        "model": "llama3:70b-q2_K",
+        "kv_bytes_per_token": 327680,
+        "context_tokens": 0,
+        "max_context_fits": 8192,
+        "model_context_max": 0,
+        "headroom_bytes": 268435456,
+        "oom_risk": true
+      },
+      "timestamp": "0001-01-01T00:00:00Z"
+    }
+  ],
+  "timestamp": "2026-07-05T12:00:00Z"
+}
