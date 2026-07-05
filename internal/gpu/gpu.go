@@ -53,14 +53,23 @@ func Sample(ctx context.Context) ([]model.GPU, error) {
 	return gpus, nil
 }
 
-// attachProcs fills per-process VRAM for AMD/Intel/unknown devices that don't
-// already have it (NVIDIA gets it from nvidia-smi). It matches a device to a
-// /proc-fdinfo PCI address when known; if there's a single such device and a
-// single DRM device in the data, it attaches directly.
+// attachProcs fills per-process VRAM for AMD/unknown devices that don't already
+// have it (NVIDIA gets it from nvidia-smi). It binds a device to /proc-fdinfo
+// data strictly by PCI address; a GPU whose known PCI address doesn't appear in
+// the data is left alone rather than being given a foreign device's processes.
 func attachProcs(gpus []model.GPU, byPdev map[string][]model.Proc) {
 	if len(byPdev) == 0 {
 		return
 	}
+	// PCI addresses already claimed by a device, so the fallback never hands one
+	// GPU's processes to another.
+	owned := map[string]bool{}
+	for i := range gpus {
+		if b := normalizePCI(gpus[i].PCIBus); b != "" {
+			owned[b] = true
+		}
+	}
+
 	var targets []int
 	for i := range gpus {
 		if gpus[i].Vendor != model.VendorNVIDIA && len(gpus[i].Procs) == 0 {
@@ -70,18 +79,30 @@ func attachProcs(gpus []model.GPU, byPdev map[string][]model.Proc) {
 	if len(targets) == 0 {
 		return
 	}
-	unmatched := 0
+
+	// 1. Exact PCI match.
+	var unmatched []int
 	for _, i := range targets {
-		if procs, ok := byPdev[normalizePCI(gpus[i].PCIBus)]; ok && gpus[i].PCIBus != "" {
-			gpus[i].Procs = procs
-		} else {
-			unmatched++
+		if b := normalizePCI(gpus[i].PCIBus); b != "" {
+			if procs, ok := byPdev[b]; ok {
+				gpus[i].Procs = procs
+				continue
+			}
 		}
+		unmatched = append(unmatched, i)
 	}
-	// Single ambiguous device + single DRM device: attach directly.
-	if unmatched == 1 && len(targets) == 1 && len(byPdev) == 1 {
-		for _, procs := range byPdev {
-			gpus[targets[0]].Procs = procs
+
+	// 2. Fallback ONLY for a single device whose PCI address is unknown (so it
+	//    couldn't match), when there's exactly one DRM device in the data and
+	//    that device isn't owned by another GPU.
+	if len(unmatched) == 1 && len(byPdev) == 1 {
+		i := unmatched[0]
+		if normalizePCI(gpus[i].PCIBus) == "" {
+			for pdev, procs := range byPdev {
+				if !owned[pdev] {
+					gpus[i].Procs = procs
+				}
+			}
 		}
 	}
 }

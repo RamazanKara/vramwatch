@@ -132,7 +132,7 @@ vramwatch combines two sources per GPU:
 
 1. **The driver** (`nvidia-smi` / `rocm-smi`) — device total/used/free, plus
    per-process VRAM: from `nvidia-smi` on NVIDIA, and from the kernel’s
-   `/proc/<pid>/fdinfo` DRM interface for AMD/Intel on Linux. This is ground truth.
+   `/proc/<pid>/fdinfo` DRM interface for AMD on Linux. This is ground truth.
 2. **The loader** — which models are resident and their architecture:
    - **Ollama** via `/api/ps` (VRAM) + `/api/show` (architecture).
    - **llama.cpp** via `/props` (context) + **reading the GGUF file’s header**
@@ -172,12 +172,13 @@ Everything in the estimated rows is labelled `estimated` in the output. See the
 |------------|--------------------------|:---:|:---:|-------|
 | NVIDIA     | `nvidia-smi`             | ✅ | ✅ | full support |
 | AMD        | `rocm-smi` + `/proc`     | ✅ | ✅ (Linux) | per-process via DRM `fdinfo` on Linux; loader VRAM elsewhere |
-| Intel      | (`/proc` fdinfo)         | — | ✅ (Linux) | per-process only; no device totals yet |
 
 Per-process VRAM comes from `nvidia-smi` on NVIDIA and from the kernel’s
-`/proc/<pid>/fdinfo` DRM interface for AMD/Intel on Linux (it reads processes you
-have permission to see — usually your own). It lets vramwatch use the *real*
-process footprint instead of the loader’s self-report.
+`/proc/<pid>/fdinfo` DRM interface for AMD on Linux (it reads processes you have
+permission to see — usually your own). It lets vramwatch use the *real* process
+footprint instead of the loader’s self-report. (The `fdinfo` reader is
+vendor-neutral, so Intel support is a small step once an Intel device provider
+lands — see the roadmap.)
 
 | Loader   | via                       | model + VRAM | weights/KV split |
 |----------|---------------------------|:---:|:---:|
@@ -199,14 +200,15 @@ vramwatch is deliberately honest about what it can and can’t know:
   small conservative over-estimate rather than 2–4× too low.
 - **llama.cpp weights assume full GPU offload.** The GGUF file size ≈ VRAM weights
   only when every layer is on the GPU; with partial offload it over-reports weights.
-- **AMD/Intel per-process VRAM is Linux-only** (via `/proc` DRM `fdinfo`), and only
-  for processes you can read — a loader running under a different user (e.g. a
-  system service) won’t be visible, and vramwatch falls back to the loader’s
-  reported VRAM. On Windows/macOS, AMD uses the loader’s reported VRAM.
+- **AMD per-process VRAM is Linux-only** (via `/proc` DRM `fdinfo`), and only for
+  processes you can read — a loader running under a different user (e.g. a system
+  service) won’t be visible, and vramwatch falls back to the loader’s reported
+  VRAM. On Windows/macOS, AMD uses the loader’s reported VRAM.
 - **Prediction is linear** in the KV cache and holds weights/overhead constant — a
   good planning estimate, not a guarantee.
 
-**Roadmap:** allocator-level attribution, KV-dtype auto-detection, AMD per-process on
+**Roadmap:** allocator-level attribution, KV-dtype auto-detection, an Intel GPU
+provider (the `fdinfo` reader already handles i915), AMD per-process on
 Windows/macOS, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
 
 ## Road to 1.0

@@ -11,9 +11,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Focus: complete per-process attribution.
 
 ### Added
-- **Per-process VRAM for AMD and Intel on Linux**, read from the kernel’s
+- **Per-process VRAM for AMD on Linux**, read from the kernel’s
   `/proc/<pid>/fdinfo` DRM interface (deduplicated by DRM client id, mapped to a
-  device by PCI address). Previously per-process was NVIDIA-only.
+  device by PCI address). Previously per-process was NVIDIA-only. The reader is
+  vendor-neutral (amdgpu/i915), though only AMD devices are surfaced for now.
 - The inference **footprint is now matched by process name** (`ollama` /
   `llama-server`) when a loader doesn’t report a PID, so per-process VRAM actually
   improves the footprint on NVIDIA and AMD instead of being collected and ignored.

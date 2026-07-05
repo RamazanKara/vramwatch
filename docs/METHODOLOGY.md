@@ -14,9 +14,10 @@ For each GPU, vramwatch gathers:
 
 1. **Driver truth** — from `nvidia-smi` or `rocm-smi`:
    - total / used / free VRAM for the device,
-   - per-process VRAM: NVIDIA via `nvidia-smi --query-compute-apps`; AMD/Intel via
-     the kernel’s `/proc/<pid>/fdinfo` DRM interface on Linux (deduplicated by DRM
-     client id and mapped to a device by PCI address).
+   - per-process VRAM: NVIDIA via `nvidia-smi --query-compute-apps`; AMD via the
+     kernel’s `/proc/<pid>/fdinfo` DRM interface on Linux (deduplicated by DRM
+     client id and mapped to a device by PCI address). The `fdinfo` reader is
+     vendor-neutral but only AMD devices are currently surfaced.
 
 2. **Loader truth** — which models are resident and their shape:
    - **Ollama**: `GET /api/ps` gives each model’s name and `size_vram`; `POST

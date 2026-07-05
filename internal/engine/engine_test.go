@@ -327,6 +327,31 @@ func TestFootprintFromNamedProcess(t *testing.T) {
 	}
 }
 
+// Name matching must pick the single largest loader process, never sum in
+// unrelated bystanders that merely share a substring.
+func TestProcUsedForNameMatch(t *testing.T) {
+	llamaModel := []model.LoaderModel{{Loader: "llama.cpp", Name: "x"}}
+	gpu := model.GPU{Procs: []model.Proc{
+		{PID: 1, Name: "llama-server", UsedBytes: 8 * model.GiB},             // the real one
+		{PID: 2, Name: "/home/llama/python", UsedBytes: 6 * model.GiB},       // basename "python" — no match
+		{PID: 3, Name: "llama_tool.py", UsedBytes: 5 * model.GiB},            // not a "llama-" prefix
+		{PID: 4, Name: `C:\Users\llama\thing.exe`, UsedBytes: 7 * model.GiB}, // basename "thing" — no match
+	}}
+	if got := procUsedFor(gpu, llamaModel); got != 8*model.GiB {
+		t.Errorf("footprint = %s, want 8 GiB (largest single loader match, no bystanders)", model.HumanBytes(got))
+	}
+
+	// Two processes genuinely match the ollama prefix: take the largest, not the sum.
+	ollamaModel := []model.LoaderModel{{Loader: "ollama", Name: "y"}}
+	gpu2 := model.GPU{Procs: []model.Proc{
+		{PID: 1, Name: "ollama", UsedBytes: 22 * model.GiB},
+		{PID: 2, Name: "ollama-exporter", UsedBytes: 1 * model.GiB},
+	}}
+	if got := procUsedFor(gpu2, ollamaModel); got != 22*model.GiB {
+		t.Errorf("footprint = %s, want 22 GiB (largest match, not summed)", model.HumanBytes(got))
+	}
+}
+
 func TestBuildDeterministic(t *testing.T) {
 	gpu, models := scenario70B()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)

@@ -221,41 +221,47 @@ func procUsedFor(gpu model.GPU, models []model.LoaderModel) uint64 {
 			return sum
 		}
 	}
-	// 2. Name match by loader.
-	tokens := loaderTokens(models)
-	if len(tokens) == 0 {
-		return 0
-	}
-	var sum uint64
+	// 2. Name match by loader. Take the single LARGEST match (the inference
+	//    process dominates VRAM) rather than a sum, so a co-resident bystander
+	//    with a similar name can't inflate the footprint.
+	var best uint64
 	for _, p := range gpu.Procs {
-		name := strings.ToLower(p.Name)
-		for _, tok := range tokens {
-			if strings.Contains(name, tok) {
-				sum += p.UsedBytes
-				break
-			}
+		if loaderMatches(p.Name, models) && p.UsedBytes > best {
+			best = p.UsedBytes
 		}
 	}
-	return sum
+	return best
 }
 
-// loaderTokens returns the substrings that identify each resident loader's
-// process in the driver's process list.
-func loaderTokens(models []model.LoaderModel) []string {
-	set := map[string]bool{}
+// loaderMatches reports whether a process name looks like one of the resident
+// loaders' server processes. It matches the executable basename against a
+// narrow prefix set (e.g. "ollama*", "llama-*"), not a full-path substring, so
+// an unrelated process on the same path won't collide.
+func loaderMatches(rawName string, models []model.LoaderModel) bool {
+	n := procBase(rawName)
 	for _, m := range models {
 		switch strings.ToLower(m.Loader) {
 		case "ollama":
-			set["ollama"] = true
+			if strings.HasPrefix(n, "ollama") {
+				return true
+			}
 		case "llama.cpp":
-			set["llama"] = true
+			if strings.HasPrefix(n, "llama-") || n == "llama.cpp" {
+				return true
+			}
 		}
 	}
-	out := make([]string, 0, len(set))
-	for t := range set {
-		out = append(out, t)
+	return false
+}
+
+// procBase lower-cases a process name and reduces it to its executable
+// basename (handling both / and \ separators and a trailing .exe).
+func procBase(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if i := strings.LastIndexAny(raw, `/\`); i >= 0 {
+		raw = raw[i+1:]
 	}
-	return out
+	return strings.TrimSuffix(raw, ".exe")
 }
 
 func loaderSource(models []model.LoaderModel) string {

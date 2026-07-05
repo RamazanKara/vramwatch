@@ -1,6 +1,7 @@
 package gpu
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,6 +34,39 @@ func TestParseFdinfo(t *testing.T) {
 	_, _, _, isDRM = parseFdinfo("pos:\t0\nflags:\t02\nmnt_id:\t8\n")
 	if isDRM {
 		t.Error("non-DRM fd should not be flagged DRM")
+	}
+}
+
+func TestParseFdinfoPrefersResident(t *testing.T) {
+	// Both keys present: report physical residency (2 GiB), not the 8 GiB bound.
+	c := "drm-driver:\tamdgpu\ndrm-pdev:\t0000:03:00.0\ndrm-client-id:\t1\ndrm-total-vram:\t8388608 KiB\ndrm-resident-vram:\t2097152 KiB\n"
+	_, _, vram, _ := parseFdinfo(c)
+	if vram != 2*model.GiB {
+		t.Errorf("want resident 2 GiB, got %s", model.HumanBytes(vram))
+	}
+	// total-only falls back to total.
+	_, _, vram, _ = parseFdinfo("drm-driver:\tamdgpu\ndrm-pdev:\t0000:03:00.0\ndrm-total-vram:\t1048576 KiB\n")
+	if vram != 1*model.GiB {
+		t.Errorf("total-only should fall back to total, got %s", model.HumanBytes(vram))
+	}
+}
+
+func TestProcVRAMInNoClientDedup(t *testing.T) {
+	root := t.TempDir()
+	fd := "drm-driver:\tamdgpu\ndrm-pdev:\t0000:03:00.0\ndrm-memory-vram:\t4194304 KiB\n" // NO client-id
+	writeFd(t, root, 555, "3", fd)
+	writeFd(t, root, 555, "4", fd) // dup, no client -> must NOT double count
+	writeComm(t, root, 555, "app")
+	procs := procVRAMIn(root)["0000:03:00.0"]
+	if len(procs) != 1 || procs[0].UsedBytes != 4*model.GiB {
+		t.Errorf("client-less dup should count once (4 GiB): %+v", procs)
+	}
+}
+
+func TestParseDRMBytesOverflow(t *testing.T) {
+	// 2^34 GiB = 2^64 bytes, which would wrap to 0; must saturate instead.
+	if got := parseDRMBytes("17179869184 GiB"); got != math.MaxUint64 {
+		t.Errorf("overflow should saturate to MaxUint64, got %d", got)
 	}
 }
 
@@ -143,5 +177,24 @@ func TestAttachProcs(t *testing.T) {
 	attachProcs(gpus, procs)
 	if len(gpus[0].Procs) != 1 || gpus[0].Procs[0].PID != 9 {
 		t.Error("NVIDIA procs should not be overwritten")
+	}
+}
+
+func TestAttachProcsNoMisattribution(t *testing.T) {
+	// A GPU with a KNOWN PCI that isn't in the data must NOT get a foreign
+	// device's processes (e.g. an Intel iGPU's).
+	foreign := map[string][]model.Proc{"0000:00:02.0": {{PID: 1, Name: "Xorg", UsedBytes: 1 * model.GiB}}}
+	gpus := []model.GPU{{Index: 0, Vendor: model.VendorAMD, PCIBus: "0000:03:00.0"}}
+	attachProcs(gpus, foreign)
+	if len(gpus[0].Procs) != 0 {
+		t.Error("a GPU with a known non-matching PCI must not receive a foreign device's procs")
+	}
+
+	// Ambiguous (unknown-PCI) GPU but two DRM devices in the data: don't guess.
+	two := map[string][]model.Proc{"0000:00:02.0": {{PID: 1}}, "0000:04:00.0": {{PID: 2}}}
+	gpus = []model.GPU{{Index: 0, Vendor: model.VendorAMD}}
+	attachProcs(gpus, two)
+	if len(gpus[0].Procs) != 0 {
+		t.Error("ambiguous multi-device data must not attach to an unknown-PCI GPU")
 	}
 }
