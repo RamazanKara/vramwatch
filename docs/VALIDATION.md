@@ -75,7 +75,12 @@ doesn't split on backslashes.
 
 - NVIDIA hardware (the `nvidia-smi` path).
 - AMD on Linux (the `rocm-smi` provider and `/proc/<pid>/fdinfo` per-process path).
-  These are currently tested only against captured fixtures.
+  These are currently tested only against captured fixtures. Note that **WSL2 can't
+  stand in for this**: it exposes the GPU through `/dev/dxg` (dxgkrnl), with no
+  `amdgpu` kernel module and no `/sys/class/kfd` topology, so `rocm-smi`/`amd-smi`
+  fail with "amdgpu not found in modules" and `/proc/<pid>/fdinfo` carries no `drm-*`
+  memory keys. Validating this path needs native Linux on AMD (bare metal or PCI
+  passthrough), not WSL.
 - Multiple GPUs, and a range of drivers.
 
 If you run vramwatch on your hardware, posting the result (and any mismatch) is the
