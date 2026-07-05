@@ -7,7 +7,6 @@ package engine
 import (
 	"fmt"
 	"os"
-	"sort"
 	"time"
 
 	"github.com/RamazanKara/vramwatch/internal/model"
@@ -19,12 +18,15 @@ const DefaultOOMThreshold = 512 * model.MiB
 
 // Options tunes the attribution and prediction behaviour.
 type Options struct {
-	Version       string
-	Host          string
-	Now           time.Time // injectable for deterministic output; zero => time.Now()
-	OOMThreshold  uint64    // 0 => DefaultOOMThreshold
-	DefaultKVBits int       // fallback KV element size when a loader omits it; 0 => 16 (f16)
+	Version      string
+	Host         string
+	Now          time.Time // injectable for deterministic output; zero => time.Now()
+	OOMThreshold uint64    // 0 => DefaultOOMThreshold
 }
+
+// maxPredictTokens caps projected context so a uint64->int narrowing can never
+// overflow (matters only on 32-bit builds); far beyond any real context window.
+const maxPredictTokens = 1 << 30
 
 func (o Options) now() time.Time {
 	if o.Now.IsZero() {
@@ -69,25 +71,23 @@ func KVCacheBytes(a model.Arch, ctxTokens int) uint64 {
 	return KVBytesPerToken(a) * uint64(ctxTokens)
 }
 
-// modelWeightsKV resolves a model's weights and KV-cache bytes, preferring
-// loader-reported figures and falling back to the architecture-based
-// estimate. The returned estimated flag is true when either figure was
-// derived rather than reported.
-func modelWeightsKV(m model.LoaderModel) (weights, kv uint64, estimated bool) {
-	weights, kv = m.WeightsBytes, m.KVCacheBytes
-	if kv == 0 {
-		if est := KVCacheBytes(m.Arch, m.ContextTokens); est > 0 {
-			kv, estimated = est, true
-		}
+// modelKV resolves a model's KV-cache bytes, preferring a loader-reported value
+// and falling back to the architecture-based estimate. reported is true when
+// the figure came from the loader rather than being derived.
+func modelKV(m model.LoaderModel) (kv uint64, reported bool) {
+	if m.KVCacheBytes > 0 {
+		return m.KVCacheBytes, true
 	}
-	if weights == 0 && m.VRAMBytes > 0 && m.VRAMBytes > kv {
-		weights, estimated = m.VRAMBytes-kv, true
-	}
-	return weights, kv, estimated || m.Estimated
+	return KVCacheBytes(m.Arch, m.ContextTokens), false
 }
 
 // AttributeGPU produces the fully-tiled segment list for one device given the
 // models resident on it. The segments always sum exactly to gpu.TotalBytes.
+//
+// Reported figures (loader-provided weights/KV) are treated as ground truth and
+// win any conflict; estimated figures are shrunk to fit the real footprint. An
+// estimated KV never claims the whole footprint, since weights are always
+// resident too.
 func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, []string) {
 	var warnings []string
 
@@ -101,17 +101,20 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 		used = total
 	}
 
-	// Sum the weights/KV of models mapped to this device.
-	var sumWeights, sumKV, sumModelVRAM uint64
-	anyEstimated := false
+	// Aggregate reported weights and KV (reported-or-estimated) across models.
+	var reportedWeights, kvBytes, sumModelVRAM uint64
+	weightsReported, kvReported := false, false
 	for _, m := range models {
-		w, kv, est := modelWeightsKV(m)
-		sumWeights += w
-		sumKV += kv
-		sumModelVRAM += m.VRAMBytes
-		if est {
-			anyEstimated = true
+		if m.WeightsBytes > 0 {
+			reportedWeights += m.WeightsBytes
+			weightsReported = true
 		}
+		kv, rep := modelKV(m)
+		kvBytes += kv
+		if rep {
+			kvReported = true
+		}
+		sumModelVRAM += m.VRAMBytes
 		if !m.Arch.KnownForKV() && m.KVCacheBytes == 0 {
 			warnings = append(warnings, fmt.Sprintf("model %q: architecture unknown, KV cache not estimated", m.Name))
 		}
@@ -127,33 +130,54 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 		infProc = used
 	}
 
-	// Clamp the estimated weights/KV so they never exceed the real footprint.
-	weights, kv := sumWeights, sumKV
+	weights, kv := reportedWeights, kvBytes
 	if kv > infProc {
 		kv = infProc
 	}
-	if weights > infProc-kv {
+	weightsEstimated := false
+	if weightsReported {
+		// Reported weights win any conflict with an (often estimated) KV.
+		if weights > infProc {
+			weights = infProc
+		}
+		if weights+kv > infProc {
+			kv = infProc - weights
+		}
+	} else {
+		// Weights are derived from whatever the footprint leaves after KV. An
+		// estimated KV must never claim the entire footprint.
+		maxKV := infProc
+		if !kvReported && infProc > 0 {
+			maxKV = infProc - infProc/10 // reserve >=10% for weights
+		}
+		if kv > maxKV {
+			if !kvReported {
+				warnings = append(warnings, "KV-cache estimate exceeded the model footprint (a quantized KV cache would explain this); the weights/KV split is approximate")
+			}
+			kv = maxKV
+		}
 		weights = infProc - kv
+		weightsEstimated = weights > 0
 	}
 	compute := infProc - weights - kv
 	other := used - infProc
 	free := total - used
 
-	src := "driver"
+	loaderSrc := loaderSource(models)
 	segs := make([]model.Segment, 0, 5)
 	if weights > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindWeights, Label: model.KindWeights.DefaultLabel(), Bytes: weights, Source: loaderSource(models), Estimated: anyEstimated})
+		segs = append(segs, model.Segment{Kind: model.KindWeights, Label: model.KindWeights.DefaultLabel(), Bytes: weights, Source: loaderSrc, Estimated: weightsEstimated})
 	}
 	if kv > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindKVCache, Label: model.KindKVCache.DefaultLabel(), Bytes: kv, Source: loaderSource(models), Estimated: anyEstimated})
+		segs = append(segs, model.Segment{Kind: model.KindKVCache, Label: model.KindKVCache.DefaultLabel(), Bytes: kv, Source: loaderSrc, Estimated: !kvReported})
 	}
 	if compute > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindCompute, Label: model.KindCompute.DefaultLabel(), Bytes: compute, Source: src})
+		segs = append(segs, model.Segment{Kind: model.KindCompute, Label: model.KindCompute.DefaultLabel(), Bytes: compute, Source: "driver"})
 	}
 	if other > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindOtherProcess, Label: model.KindOtherProcess.DefaultLabel(), Bytes: other, Source: src})
+		segs = append(segs, model.Segment{Kind: model.KindOtherProcess, Label: model.KindOtherProcess.DefaultLabel(), Bytes: other, Source: "driver"})
 	}
-	segs = append(segs, model.Segment{Kind: model.KindFree, Label: model.KindFree.DefaultLabel(), Bytes: free, Source: src})
+	segs = append(segs, model.Segment{Kind: model.KindFree, Label: model.KindFree.DefaultLabel(), Bytes: free, Source: "driver"})
 	return segs, warnings
 }
 
@@ -206,6 +230,9 @@ func Predict(gpu model.GPU, models []model.LoaderModel, oomThreshold uint64) *mo
 	}
 
 	additional := free / kvPerTok
+	if additional > maxPredictTokens {
+		additional = maxPredictTokens // guard the uint64->int narrowing below
+	}
 	maxFits := m.ContextTokens + int(additional)
 	if m.ContextMax > 0 && maxFits > m.ContextMax {
 		maxFits = m.ContextMax
@@ -247,18 +274,19 @@ func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (C
 	if kvPerTok == 0 {
 		return ContextFit{}, false
 	}
-	weights, curKV, _ := modelWeightsKV(m)
-	// compute overhead = footprint - weights - current KV.
+	// Everything in the footprint that isn't the current KV cache (weights +
+	// compute overhead) is held constant; only the KV cache scales with context.
+	curKV, _ := modelKV(m)
 	footprint := m.VRAMBytes
 	if pu := procUsedFor(gpu, models); pu > 0 {
 		footprint = pu
 	}
-	var overhead uint64
-	if footprint > weights+curKV {
-		overhead = footprint - weights - curKV
+	var base uint64
+	if footprint > curKV {
+		base = footprint - curKV
 	}
 	kvTarget := kvPerTok * uint64(targetCtx)
-	needed := weights + overhead + kvTarget
+	needed := base + kvTarget
 	budget := gpu.TotalBytes - gpu.TotalBytes/50 // 98% of total
 	return ContextFit{
 		Model:           m.Name,
@@ -272,15 +300,22 @@ func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (C
 	}, true
 }
 
-// primaryModel returns the resident model with the largest VRAM footprint,
-// which is the one predictions and fit checks are about.
+// primaryModel returns the largest-VRAM resident model whose architecture is
+// known well enough to compute a KV cache — the one predictions and fit checks
+// are about. A bigger model with an unknown architecture is skipped in favour
+// of a smaller, fully-known one rather than giving up entirely.
 func primaryModel(models []model.LoaderModel) (model.LoaderModel, bool) {
-	if len(models) == 0 {
-		return model.LoaderModel{}, false
+	var best model.LoaderModel
+	found := false
+	for _, m := range models {
+		if !m.Arch.KnownForKV() {
+			continue
+		}
+		if !found || m.VRAMBytes > best.VRAMBytes {
+			best, found = m, true
+		}
 	}
-	sorted := append([]model.LoaderModel(nil), models...)
-	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].VRAMBytes > sorted[j].VRAMBytes })
-	return sorted[0], true
+	return best, found
 }
 
 // Build assembles a full Snapshot from raw GPU and loader observations,

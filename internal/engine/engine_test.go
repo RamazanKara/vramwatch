@@ -134,6 +134,94 @@ func TestWillContextFit(t *testing.T) {
 	}
 }
 
+// Reported weights must survive a conflict with an over-estimated KV cache.
+func TestAttributeReportedWeightsWin(t *testing.T) {
+	gpu := model.GPU{Index: 0, Vendor: model.VendorAMD, TotalBytes: 24 * model.GiB, UsedBytes: 20 * model.GiB, FreeBytes: 4 * model.GiB}
+	m := model.LoaderModel{
+		Loader: "ollama", Name: "x", GPUIndex: 0,
+		VRAMBytes:     20 * model.GiB,
+		WeightsBytes:  19 * model.GiB, // loader-reported ground truth
+		ContextTokens: 26000,          // KV estimate ~8 GiB, over the footprint
+		Arch:          model.Arch{Name: "llama", Layers: 80, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
+	}
+	segs, _ := AttributeGPU(gpu, []model.LoaderModel{m})
+	var sum uint64
+	kinds := map[model.SegmentKind]uint64{}
+	for _, s := range segs {
+		sum += s.Bytes
+		kinds[s.Kind] = s.Bytes
+	}
+	if sum != gpu.TotalBytes {
+		t.Fatalf("segments sum %d != total %d", sum, gpu.TotalBytes)
+	}
+	if kinds[model.KindWeights] != 19*model.GiB {
+		t.Errorf("reported weights should be preserved at 19 GiB, got %s", model.HumanBytes(kinds[model.KindWeights]))
+	}
+	if kinds[model.KindKVCache] > 1*model.GiB {
+		t.Errorf("estimated KV should be shrunk to fit, got %s", model.HumanBytes(kinds[model.KindKVCache]))
+	}
+}
+
+// When the KV estimate exceeds the footprint, weights must not be starved to 0.
+func TestAttributeKVOvershootLeavesWeights(t *testing.T) {
+	gpu := model.GPU{Index: 0, Vendor: model.VendorNVIDIA, TotalBytes: 4 * model.GiB, UsedBytes: 4 * model.GiB}
+	m := model.LoaderModel{
+		Loader: "ollama", Name: "tiny-longctx", GPUIndex: 0,
+		VRAMBytes:     4 * model.GiB,
+		ContextTokens: 16384, // KV estimate ~5 GiB > footprint
+		Arch:          model.Arch{Name: "llama", Layers: 80, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
+	}
+	segs, warns := AttributeGPU(gpu, []model.LoaderModel{m})
+	kinds := map[model.SegmentKind]uint64{}
+	var sum uint64
+	for _, s := range segs {
+		sum += s.Bytes
+		kinds[s.Kind] = s.Bytes
+	}
+	if sum != gpu.TotalBytes {
+		t.Fatalf("segments sum %d != total %d", sum, gpu.TotalBytes)
+	}
+	if kinds[model.KindWeights] == 0 {
+		t.Error("weights must never be 0 for a resident model (KV must not take the whole footprint)")
+	}
+	if kinds[model.KindKVCache] >= gpu.TotalBytes {
+		t.Error("KV must not claim the entire footprint")
+	}
+	found := false
+	for _, w := range warns {
+		if len(w) > 0 {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("expected a warning that the KV estimate exceeded the footprint")
+	}
+}
+
+// Prediction must fall back to a smaller known-arch model instead of giving up
+// because the largest model has an unknown architecture.
+func TestPredictPrefersKnownArch(t *testing.T) {
+	gpu := model.GPU{Index: 0, Vendor: model.VendorNVIDIA, TotalBytes: 24 * model.GiB, UsedBytes: 18 * model.GiB, FreeBytes: 6 * model.GiB}
+	unknown := model.LoaderModel{Loader: "ollama", Name: "novel-arch", GPUIndex: 0, VRAMBytes: 12 * model.GiB}
+	known := model.LoaderModel{
+		Loader: "ollama", Name: "llama3:8b", GPUIndex: 0, VRAMBytes: 6 * model.GiB,
+		ContextTokens: 4096, ContextMax: 8192,
+		Arch: model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
+	}
+	models := []model.LoaderModel{unknown, known}
+
+	p := Predict(gpu, models, DefaultOOMThreshold)
+	if p == nil {
+		t.Fatal("expected a prediction from the smaller known-arch model")
+	}
+	if p.Model != "llama3:8b" {
+		t.Errorf("prediction should be for the known model, got %q", p.Model)
+	}
+	if _, ok := WillContextFit(gpu, models, 4096); !ok {
+		t.Error("WillContextFit should succeed using the known-arch model")
+	}
+}
+
 func TestBuildDeterministic(t *testing.T) {
 	gpu, models := scenario70B()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)

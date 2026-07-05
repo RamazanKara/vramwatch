@@ -47,6 +47,38 @@ func TestParseNvidiaAppsNoProcesses(t *testing.T) {
 	}
 }
 
+func TestParseNvidiaAppsCommaInName(t *testing.T) {
+	gpus, idx := parseNvidiaGPUs(nvGPUFixture)
+	// A process launched from a path containing a comma must not shift columns.
+	parseNvidiaApps("GPU-abc123, 4242, /opt/app,v2/python, 512", gpus, idx)
+	if len(gpus[0].Procs) != 1 {
+		t.Fatalf("want 1 proc, got %d", len(gpus[0].Procs))
+	}
+	p := gpus[0].Procs[0]
+	if p.Name != "/opt/app,v2/python" {
+		t.Errorf("name = %q, want %q", p.Name, "/opt/app,v2/python")
+	}
+	if p.UsedBytes != 512*model.MiB {
+		t.Errorf("used = %d, want %d (memory must come from the last field)", p.UsedBytes, uint64(512*model.MiB))
+	}
+}
+
+func TestParseUintEdgeCases(t *testing.T) {
+	cases := map[string]uint64{
+		"":            0,
+		"   ":         0,
+		"\t":          0,
+		"25753026560": 25753026560,
+		"1.5 GB":      1,
+		"[N/A]":       0,
+	}
+	for in, want := range cases {
+		if got := parseUint(in); got != want {
+			t.Errorf("parseUint(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
 const rocmFixture = `{
   "card0": {
     "VRAM Total Memory (B)": "25753026560",

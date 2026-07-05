@@ -21,7 +21,7 @@ func cmdSnapshot(args []string) error {
 		fmt.Fprintln(os.Stderr, "vramwatch snapshot — one-shot VRAM breakdown\n\nFLAGS")
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 
@@ -32,6 +32,9 @@ func cmdSnapshot(args []string) error {
 	if *static {
 		snap.Host = ""
 		snap.Timestamp = time.Time{}
+		for i := range snap.Breakdowns {
+			snap.Breakdowns[i].Timestamp = time.Time{}
+		}
 	}
 
 	wrote := false

@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"flag"
 	"io"
 	"os"
 	"strings"
@@ -139,5 +141,36 @@ func TestCmdSnapshotBadSource(t *testing.T) {
 	})
 	if err == nil {
 		t.Error("expected an error for an unrecognised --source")
+	}
+	// A bad source is a runtime error, not a usage error.
+	var ue *usageError
+	if errors.As(err, &ue) {
+		t.Error("bad --source value should be a runtime error, not a usageError")
+	}
+}
+
+func TestCmdHelpReturnsErrHelp(t *testing.T) {
+	// flag prints usage to stderr; silence it for a clean test run.
+	old := os.Stderr
+	_, w, _ := os.Pipe()
+	os.Stderr = w
+	err := cmdSnapshot([]string{"--help"})
+	w.Close()
+	os.Stderr = old
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Errorf("--help should return flag.ErrHelp (so main exits 0), got %v", err)
+	}
+}
+
+func TestCmdBadFlagIsUsageError(t *testing.T) {
+	old := os.Stderr
+	_, w, _ := os.Pipe()
+	os.Stderr = w
+	err := cmdSnapshot([]string{"--nope"})
+	w.Close()
+	os.Stderr = old
+	var ue *usageError
+	if !errors.As(err, &ue) {
+		t.Errorf("an unknown flag should be a usageError (so main exits 2), got %v", err)
 	}
 }

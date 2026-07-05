@@ -4,6 +4,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"runtime"
@@ -41,6 +43,10 @@ Docs: https://github.com/RamazanKara/vramwatch
 `
 
 func main() {
+	// Enable ANSI on legacy Windows consoles for every command that may print
+	// colour (no-op elsewhere and on modern terminals).
+	enableVT()
+
 	if len(os.Args) < 2 {
 		fmt.Print(usage)
 		return
@@ -67,6 +73,15 @@ func main() {
 		os.Exit(2)
 	}
 	if err != nil {
+		// A help request is not an error; flag already printed the usage.
+		if errors.Is(err, flag.ErrHelp) {
+			return
+		}
+		// Usage errors (bad flags) exit 2; flag already printed the message.
+		var ue *usageError
+		if errors.As(err, &ue) {
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "vramwatch:", err)
 		os.Exit(1)
 	}

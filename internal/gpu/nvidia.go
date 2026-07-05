@@ -65,7 +65,11 @@ func parseNvidiaGPUs(csv string) ([]model.GPU, map[string]int) {
 }
 
 // parseNvidiaApps parses the --query-compute-apps CSV (used_memory in MiB) and
-// attaches processes to their GPU by uuid.
+// attaches processes to their GPU by uuid. The query is a fixed 4 columns
+// (gpu_uuid, pid, process_name, used_memory) but nvidia-smi does not quote
+// fields, so a process name containing a comma would shift a naive split. The
+// first two and last columns are stable, so we anchor on those and rejoin the
+// middle as the name.
 func parseNvidiaApps(csv string, gpus []model.GPU, uuidToIdx map[string]int) {
 	for _, line := range strings.Split(csv, "\n") {
 		line = strings.TrimSpace(line)
@@ -80,10 +84,12 @@ func parseNvidiaApps(csv string, gpus []model.GPU, uuidToIdx map[string]int) {
 		if !ok {
 			continue
 		}
+		last := len(f) - 1
+		name := strings.Join(f[2:last], ",") // rejoin any commas in the process name
 		gpus[i].Procs = append(gpus[i].Procs, model.Proc{
 			PID:       atoiDefault(f[1], 0),
-			Name:      f[2],
-			UsedBytes: mibToBytes(f[3]),
+			Name:      name,
+			UsedBytes: mibToBytes(f[last]),
 		})
 	}
 }

@@ -42,7 +42,7 @@ func cmdPredict(args []string) error {
 		fmt.Fprintln(os.Stderr, "vramwatch predict — will a context fit, and what's the max before OOM?\n\nFLAGS")
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 

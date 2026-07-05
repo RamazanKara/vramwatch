@@ -24,7 +24,7 @@ func cmdWatch(args []string) error {
 		fmt.Fprintln(os.Stderr, "vramwatch watch — live stacked VRAM bar\n\nFLAGS")
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if *interval < 100*time.Millisecond {
@@ -37,8 +37,6 @@ func cmdWatch(args []string) error {
 	}
 	color := cf.resolve()
 	opts := render.Options{Color: color, BarWidth: *barWidth}
-
-	enableVT() // no-op except on Windows
 
 	if *once {
 		return renderFrame(context.Background(), s, opts, false, "")

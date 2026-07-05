@@ -19,7 +19,7 @@ func cmdDevices(args []string) error {
 		fmt.Fprintln(os.Stderr, "vramwatch devices — detected GPUs and inference loaders\n\nFLAGS")
 		fs.PrintDefaults()
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	color := cf.resolve()

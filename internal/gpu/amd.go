@@ -88,10 +88,17 @@ func cardNum(k string) int {
 
 func parseUint(s string) uint64 {
 	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
 	n, err := strconv.ParseUint(s, 10, 64)
 	if err != nil {
-		// tolerate floats or trailing units
-		if f, ferr := strconv.ParseFloat(strings.Fields(s + " ")[0], 64); ferr == nil && f >= 0 {
+		// tolerate floats or trailing units (e.g. "1.5 GB")
+		fields := strings.Fields(s)
+		if len(fields) == 0 {
+			return 0
+		}
+		if f, ferr := strconv.ParseFloat(fields[0], 64); ferr == nil && f >= 0 {
 			return uint64(f)
 		}
 		return 0

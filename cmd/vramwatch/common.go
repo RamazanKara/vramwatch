@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
 	"strconv"
@@ -12,6 +13,29 @@ import (
 	"github.com/RamazanKara/vramwatch/internal/render"
 	"github.com/RamazanKara/vramwatch/internal/source"
 )
+
+// usageError marks a command-line usage problem (bad flag) so main can exit
+// with the conventional code 2 rather than 1.
+type usageError struct{ err error }
+
+func (e *usageError) Error() string { return e.err.Error() }
+func (e *usageError) Unwrap() error { return e.err }
+
+// parseFlags parses a subcommand's flags, mapping flag package outcomes onto
+// our error convention: flag.ErrHelp propagates (main exits 0), any other parse
+// failure becomes a usageError (main exits 2). flag has already printed the
+// message/usage in both cases.
+func parseFlags(fs *flag.FlagSet, args []string) error {
+	err := fs.Parse(args)
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, flag.ErrHelp):
+		return err
+	default:
+		return &usageError{err}
+	}
+}
 
 // colorFlags holds the shared colour-control flags for a subcommand.
 type colorFlags struct {
