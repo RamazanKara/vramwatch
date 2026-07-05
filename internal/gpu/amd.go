@@ -18,7 +18,7 @@ func (AMD) Vendor() model.Vendor               { return model.VendorAMD }
 func (AMD) Available(ctx context.Context) bool { return lookPath("rocm-smi") }
 
 func (AMD) Sample(ctx context.Context) ([]model.GPU, error) {
-	out, err := run(ctx, "rocm-smi", "--showmeminfo", "vram", "--showproductname", "--showdriverversion", "--json")
+	out, err := run(ctx, "rocm-smi", "--showmeminfo", "vram", "--showproductname", "--showdriverversion", "--showbus", "--json")
 	if err != nil {
 		return nil, err
 	}
@@ -65,6 +65,7 @@ func parseROCm(jsonStr string) ([]model.GPU, error) {
 			Name:       name,
 			Vendor:     model.VendorAMD,
 			Driver:     driver,
+			PCIBus:     getFirst(card, "PCI Bus", "pci_bus", "PCI Bus ID"),
 			TotalBytes: total,
 			UsedBytes:  used,
 			FreeBytes:  free,

@@ -38,8 +38,8 @@ func DetectAvailable(ctx context.Context) []Provider {
 	return out
 }
 
-// Sample runs every available provider and concatenates their GPUs, reindexing
-// so device indices are globally unique in display order.
+// Sample runs every available provider and concatenates their GPUs, then
+// augments non-NVIDIA devices with per-process VRAM from /proc fdinfo (Linux).
 func Sample(ctx context.Context) ([]model.GPU, error) {
 	var gpus []model.GPU
 	for _, p := range DetectAvailable(ctx) {
@@ -49,7 +49,53 @@ func Sample(ctx context.Context) ([]model.GPU, error) {
 		}
 		gpus = append(gpus, g...)
 	}
+	attachProcs(gpus, procVRAM())
 	return gpus, nil
+}
+
+// attachProcs fills per-process VRAM for AMD/Intel/unknown devices that don't
+// already have it (NVIDIA gets it from nvidia-smi). It matches a device to a
+// /proc-fdinfo PCI address when known; if there's a single such device and a
+// single DRM device in the data, it attaches directly.
+func attachProcs(gpus []model.GPU, byPdev map[string][]model.Proc) {
+	if len(byPdev) == 0 {
+		return
+	}
+	var targets []int
+	for i := range gpus {
+		if gpus[i].Vendor != model.VendorNVIDIA && len(gpus[i].Procs) == 0 {
+			targets = append(targets, i)
+		}
+	}
+	if len(targets) == 0 {
+		return
+	}
+	unmatched := 0
+	for _, i := range targets {
+		if procs, ok := byPdev[normalizePCI(gpus[i].PCIBus)]; ok && gpus[i].PCIBus != "" {
+			gpus[i].Procs = procs
+		} else {
+			unmatched++
+		}
+	}
+	// Single ambiguous device + single DRM device: attach directly.
+	if unmatched == 1 && len(targets) == 1 && len(byPdev) == 1 {
+		for _, procs := range byPdev {
+			gpus[targets[0]].Procs = procs
+		}
+	}
+}
+
+// normalizePCI canonicalises a PCI address to the full "0000:03:00.0" form.
+func normalizePCI(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	if s == "" {
+		return ""
+	}
+	if strings.Count(s, ":") == 1 { // "03:00.0" is missing the domain
+		s = "0000:" + s
+	}
+	return s
 }
 
 // run executes a command with a timeout and returns combined stdout.

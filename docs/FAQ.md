@@ -35,6 +35,14 @@ vramwatch uses the **GGUF file size** as the weights estimate, which only equals
 weights when the whole model is offloaded to the GPU. If you ran with partial offload
 (`-ngl` less than the layer count), the file size over-states GPU weights.
 
+### Does AMD per-process VRAM work?
+
+On **Linux**, yes — vramwatch reads it from `/proc/<pid>/fdinfo` (the same DRM
+interface `nvtop`/`amdgpu_top` use), so it attributes VRAM to the real
+`ollama`/`llama-server` process. It only sees processes you have permission to read,
+so if your loader runs as another user (e.g. a systemd service), run vramwatch as
+that user or as root. On Windows/macOS, AMD falls back to the loader’s reported VRAM.
+
 ### It didn’t detect my model / GPU
 
 Run the diagnostic:

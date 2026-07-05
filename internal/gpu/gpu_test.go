@@ -85,6 +85,7 @@ const rocmFixture = `{
     "VRAM Total Used Memory (B)": "24696061952",
     "Card Series": "Radeon RX 7900 XTX",
     "Card Model": "0x744c",
+    "PCI Bus": "0000:03:00.0",
     "Driver version": "6.7.0"
   },
   "system": {
@@ -115,5 +116,8 @@ func TestParseROCm(t *testing.T) {
 	}
 	if g.Driver != "6.7.0" {
 		t.Errorf("driver = %q", g.Driver)
+	}
+	if g.PCIBus != "0000:03:00.0" {
+		t.Errorf("pci bus = %q", g.PCIBus)
 	}
 }

@@ -7,6 +7,7 @@ package engine
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/RamazanKara/vramwatch/internal/model"
@@ -193,28 +194,68 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 	return segs, warnings
 }
 
-// procUsedFor sums the driver-reported VRAM of processes whose PID matches a
-// loader model on this device. Returns 0 when no match is found.
+// procUsedFor returns the driver-measured VRAM of the inference process on this
+// device. It matches first by PID (when a loader reports one), then by process
+// name (e.g. an "ollama" / "llama-server" process) — which is what lets
+// per-process VRAM stand in for a footprint the loader doesn't self-report.
+// Returns 0 when nothing matches (the caller falls back to loader-reported VRAM).
 func procUsedFor(gpu model.GPU, models []model.LoaderModel) uint64 {
 	if len(gpu.Procs) == 0 {
 		return 0
 	}
+	// 1. Exact PID match.
 	pids := map[int]bool{}
 	for _, m := range models {
 		if m.PID > 0 {
 			pids[m.PID] = true
 		}
 	}
-	if len(pids) == 0 {
+	if len(pids) > 0 {
+		var sum uint64
+		for _, p := range gpu.Procs {
+			if pids[p.PID] {
+				sum += p.UsedBytes
+			}
+		}
+		if sum > 0 {
+			return sum
+		}
+	}
+	// 2. Name match by loader.
+	tokens := loaderTokens(models)
+	if len(tokens) == 0 {
 		return 0
 	}
 	var sum uint64
 	for _, p := range gpu.Procs {
-		if pids[p.PID] {
-			sum += p.UsedBytes
+		name := strings.ToLower(p.Name)
+		for _, tok := range tokens {
+			if strings.Contains(name, tok) {
+				sum += p.UsedBytes
+				break
+			}
 		}
 	}
 	return sum
+}
+
+// loaderTokens returns the substrings that identify each resident loader's
+// process in the driver's process list.
+func loaderTokens(models []model.LoaderModel) []string {
+	set := map[string]bool{}
+	for _, m := range models {
+		switch strings.ToLower(m.Loader) {
+		case "ollama":
+			set["ollama"] = true
+		case "llama.cpp":
+			set["llama"] = true
+		}
+	}
+	out := make([]string, 0, len(set))
+	for t := range set {
+		out = append(out, t)
+	}
+	return out
 }
 
 func loaderSource(models []model.LoaderModel) string {

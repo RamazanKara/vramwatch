@@ -61,6 +61,7 @@ type GPU struct {
 	Name       string `json:"name"`
 	Vendor     Vendor `json:"vendor"`
 	Driver     string `json:"driver,omitempty"`
+	PCIBus     string `json:"pci_bus,omitempty"` // e.g. "0000:03:00.0"; used to map /proc fdinfo to a device
 	TotalBytes uint64 `json:"total_bytes"`
 	UsedBytes  uint64 `json:"used_bytes"`
 	FreeBytes  uint64 `json:"free_bytes"`

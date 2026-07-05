@@ -6,6 +6,21 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-05
+
+Focus: complete per-process attribution.
+
+### Added
+- **Per-process VRAM for AMD and Intel on Linux**, read from the kernel’s
+  `/proc/<pid>/fdinfo` DRM interface (deduplicated by DRM client id, mapped to a
+  device by PCI address). Previously per-process was NVIDIA-only.
+- The inference **footprint is now matched by process name** (`ollama` /
+  `llama-server`) when a loader doesn’t report a PID, so per-process VRAM actually
+  improves the footprint on NVIDIA and AMD instead of being collected and ignored.
+
+### Changed
+- The `rocm-smi` query adds `--showbus` to recover each device’s PCI address.
+
 ## [0.2.0] - 2026-07-05
 
 Focus: reduce the estimation limitations and document the method in full. Still
@@ -58,6 +73,7 @@ First public release.
 - `demo` and `mock:PATH` data sources for hardware-free demos, tests, and CI.
 - Single static, dependency-free binary for Linux, macOS, and Windows.
 
-[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/RamazanKara/vramwatch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RamazanKara/vramwatch/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RamazanKara/vramwatch/releases/tag/v0.1.0

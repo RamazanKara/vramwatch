@@ -14,7 +14,9 @@ For each GPU, vramwatch gathers:
 
 1. **Driver truth** — from `nvidia-smi` or `rocm-smi`:
    - total / used / free VRAM for the device,
-   - per-process VRAM (NVIDIA only, via `--query-compute-apps`).
+   - per-process VRAM: NVIDIA via `nvidia-smi --query-compute-apps`; AMD/Intel via
+     the kernel’s `/proc/<pid>/fdinfo` DRM interface on Linux (deduplicated by DRM
+     client id and mapped to a device by PCI address).
 
 2. **Loader truth** — which models are resident and their shape:
    - **Ollama**: `GET /api/ps` gives each model’s name and `size_vram`; `POST
@@ -69,7 +71,9 @@ segments always sum exactly to the device total.**
 
 The footprint is chosen in priority order:
 
-1. per-process driver VRAM for the loader’s PID (NVIDIA), else
+1. per-process driver VRAM for the inference process — matched first by **PID**,
+   then by **process name** (e.g. an `ollama` / `llama-server` process). This uses
+   the *real* resident VRAM, including runtime overhead the loader doesn’t report.
 2. the loader’s reported VRAM (`size_vram` for Ollama), else
 3. `weights + KV` derived from the GGUF file and the formula (llama.cpp).
 

@@ -288,6 +288,45 @@ func TestLlamaCppFootprintFallback(t *testing.T) {
 	}
 }
 
+// When a loader reports no PID, the footprint should come from the driver's
+// process VRAM matched by NAME (e.g. an "ollama" process) instead of the
+// loader's self-reported size.
+func TestFootprintFromNamedProcess(t *testing.T) {
+	gpu := model.GPU{
+		Index: 0, Vendor: model.VendorAMD, TotalBytes: 24 * model.GiB,
+		UsedBytes: 22*model.GiB + 512*model.MiB, FreeBytes: 24*model.GiB - (22*model.GiB + 512*model.MiB),
+		// comm-style truncated name, driver-measured VRAM (includes runtime overhead).
+		Procs: []model.Proc{{PID: 5001, Name: "ollama_llama_se", UsedBytes: 22 * model.GiB}},
+	}
+	m := model.LoaderModel{
+		Loader: "ollama", Name: "llama3:8b", GPUIndex: 0, PID: 0, // no PID from /api/ps
+		VRAMBytes:     20 * model.GiB, // loader self-report (lower than the real 22)
+		ContextTokens: 8192,
+		Arch:          model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
+	}
+	segs, _ := AttributeGPU(gpu, []model.LoaderModel{m})
+	kinds := map[model.SegmentKind]uint64{}
+	var sum uint64
+	for _, s := range segs {
+		sum += s.Bytes
+		kinds[s.Kind] = s.Bytes
+	}
+	if sum != gpu.TotalBytes {
+		t.Fatalf("segments sum %d != total %d", sum, gpu.TotalBytes)
+	}
+	// Footprint = 22 GiB (the named process), so weights = 22 GiB - KV, NOT
+	// derived from the 20 GiB self-report. KV @ 8192 = 1 GiB.
+	kv := KVCacheBytes(m.Arch, 8192)
+	if kinds[model.KindWeights] != 22*model.GiB-kv {
+		t.Errorf("weights = %s, want %s (footprint from named process)",
+			model.HumanBytes(kinds[model.KindWeights]), model.HumanBytes(22*model.GiB-kv))
+	}
+	// Other apps = device used - 22 GiB footprint = 512 MiB.
+	if kinds[model.KindOtherProcess] != 512*model.MiB {
+		t.Errorf("other apps = %s, want 512 MiB", model.HumanBytes(kinds[model.KindOtherProcess]))
+	}
+}
+
 func TestBuildDeterministic(t *testing.T) {
 	gpu, models := scenario70B()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
