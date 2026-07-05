@@ -225,12 +225,14 @@ tool is young and **hasn't yet been validated across a broad range of real
 hardware** — so the CLI and JSON shapes may still change. A `1.0` is earned, not
 declared; it means:
 
-- [~] Verified on real hardware. *Done:* AMD Radeon RX 7900 XT on Windows — device
-      total/used match the registry and the GPU perf counter exactly. *Still needed:*
-      NVIDIA, AMD-on-Linux, several GPUs/drivers, and the weights/KV split
-      sanity-checked against a running loader.
-- [ ] Ollama and llama.cpp confirmed against their current releases, plus at least
-      one more loader (vLLM is next).
+- [~] Verified on real hardware. *Done:* AMD Radeon RX 7900 XT on Windows with
+      **Ollama** — device total/used match the registry + GPU perf counter exactly,
+      the weights/KV split sums to Ollama's reported VRAM, and the KV cache grew
+      exactly 4× with 4× context (matching the model's real GQA arch). See
+      [docs/VALIDATION.md](docs/VALIDATION.md). *Still needed:* NVIDIA, AMD-on-Linux
+      (`rocm-smi`/`fdinfo`), several GPUs/drivers.
+- [x] Ollama confirmed against a current release (0.31.1) on real hardware; still
+      want llama.cpp with a real GGUF and one more loader (vLLM is next).
 - [ ] The `--json` schema and CLI held stable across a few releases with no breaking
       changes, and enough real-world use to trust the estimates in the field.
 - [ ] The headline accuracy roadmap item landed (allocator-level or
@@ -242,6 +244,7 @@ are the fastest way to get there.
 ## Docs
 
 - [Methodology](docs/METHODOLOGY.md) — the attribution model and KV math in depth.
+- [Validation](docs/VALIDATION.md) — real-hardware results cross-checked vs. ground truth.
 - [FAQ](docs/FAQ.md) — “why estimated?”, “my numbers don’t match `nvidia-smi`”, etc.
 - [Contributing](CONTRIBUTING.md) — adding GPU/loader providers.
 

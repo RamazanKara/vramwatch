@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Documentation
+- `docs/VALIDATION.md` — end-to-end real-hardware validation (AMD RX 7900 XT +
+  Ollama on Windows): device VRAM matches the registry/counter, the weights/KV
+  split sums to Ollama's reported VRAM, and the KV cache grows exactly with context
+  (matching the model's real GQA architecture).
+
 ## [0.4.0] - 2026-07-05
 
 Focus: real-hardware validation → **vramwatch now works on Windows AMD**.
