@@ -28,7 +28,7 @@ vramwatch attributes VRAM **inside** the inference process and shows you the spl
 live:
 
 ```text
-vramwatch v0.1.0
+vramwatch v1.0.0
 
 GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
 [███████████████████████████████████████████████]  23.75 GiB / 24.00 GiB used
@@ -47,13 +47,29 @@ GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
   longer context or a bigger quant will fit.
 - **OOM prediction.** It knows your model’s KV-cache growth per token, so it tells
   you the **max context that fits** and answers *“will 32k fit?”* before you try it.
+- **Quantized-KV aware.** Running a `q8_0`/`q4_0` KV cache? Pass `--kv-cache-type`
+  and the estimate is right, not 2–4× too high.
 - **AMD/ROCm is a peer, not an afterthought.** Most VRAM tooling is CUDA-only.
-  vramwatch reads `rocm-smi` alongside `nvidia-smi`, and the weights/KV split works
-  the same on both (see [Supported](#supported) for the per-process caveat).
 - **Zero friction, zero deps.** One static binary. No Python, no CUDA toolkit, no
   account, nothing uploaded. `curl | sh` and go.
-- **Honest.** Anything derived rather than measured is labelled `estimated`. See
-  [Limitations](#limitations).
+- **Honest.** Anything derived rather than measured is labelled `estimated`, and the
+  method is [documented in full](docs/METHODOLOGY.md).
+
+## vramwatch vs. the usual tools
+
+|                                   | vramwatch | `nvidia-smi` | `nvtop` / `nvitop` |
+|-----------------------------------|:---:|:---:|:---:|
+| Device total / used / free        | ✅ | ✅ | ✅ |
+| Per-process VRAM                  | ✅ (NVIDIA) | ✅ | ✅ |
+| **Weights vs KV-cache split**     | ✅ | ❌ | ❌ |
+| **Max context before OOM**        | ✅ | ❌ | ❌ |
+| **“Will 32k context fit?”**       | ✅ | ❌ | ❌ |
+| Shareable SVG scorecard           | ✅ | ❌ | ❌ |
+| AMD / ROCm                        | ✅ | ❌ | ✅ (nvtop) |
+| Single static binary, no Python   | ✅ | n/a | ❌ (nvitop) |
+
+vramwatch doesn’t replace `nvtop` for live GPU utilisation graphs — it answers the
+one question those tools can’t: *what is my model actually spending VRAM on?*
 
 ## Install
 
@@ -71,12 +87,19 @@ or `go install` as above.
 ## Usage
 
 ```sh
-vramwatch watch                 # live TUI (updates as the KV cache grows)
-vramwatch snapshot              # one-shot breakdown
-vramwatch snapshot --json       # machine-readable
-vramwatch snapshot --svg card.svg   # branded scorecard to share
-vramwatch predict --context 32768   # will 32k context fit? what's the max?
-vramwatch devices               # what GPUs/loaders did I detect?
+vramwatch watch                      # live TUI (updates as the KV cache grows)
+vramwatch snapshot                   # one-shot breakdown
+vramwatch snapshot --json            # machine-readable
+vramwatch snapshot --svg card.svg    # branded scorecard to share
+vramwatch predict --context 32768    # will 32k context fit? what's the max?
+vramwatch devices                    # what GPUs/loaders did I detect?
+```
+
+Running a quantized KV cache (Ollama `OLLAMA_KV_CACHE_TYPE`, llama.cpp `--cache-type-k`)?
+Tell vramwatch so the estimate matches:
+
+```sh
+vramwatch watch --kv-cache-type q8_0        # or export VRAMWATCH_KV_CACHE_TYPE=q8_0
 ```
 
 No GPU handy? Every command takes `--source`:
@@ -107,8 +130,10 @@ vramwatch combines two sources per GPU:
 
 1. **The driver** (`nvidia-smi` / `rocm-smi`) — device total/used/free, plus
    per-process VRAM on NVIDIA. This is ground truth.
-2. **The loader** (Ollama `/api/ps` + `/api/show`, llama.cpp `/props`) — which
-   models are resident and their architecture.
+2. **The loader** — which models are resident and their architecture:
+   - **Ollama** via `/api/ps` (VRAM) + `/api/show` (architecture).
+   - **llama.cpp** via `/props` (context) + **reading the GGUF file’s header**
+     directly for the architecture and weight size.
 
 It then splits the inference process’s footprint. The KV cache is computed with the
 standard formula:
@@ -117,65 +142,77 @@ standard formula:
 KV bytes/token = 2 (K and V) · n_layers · n_kv_heads · head_dim · bytes_per_element
 ```
 
-which is GQA/MQA-aware (`n_kv_heads`). The formula also supports a quantized KV cache
-(`bytes_per_element`), though v0.1 always assumes f16 until KV-dtype detection lands —
-see [Limitations](#limitations). Weights are then `process_VRAM − KV − compute
-overhead`. The segments always tile the device exactly:
+which is GQA/MQA-aware (`n_kv_heads`) and dtype-aware (`bytes_per_element`, set by
+`--kv-cache-type`). The segments always tile the device exactly:
 **weights + KV + compute + other apps + free = total**.
+
+**The full method — including a worked example and exactly what’s measured vs.
+estimated — is in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).**
+
+## Accuracy: measured vs. estimated
+
+| Figure | How it’s obtained | Trust |
+|--------|-------------------|-------|
+| Device total / used / free | Driver (`nvidia-smi`/`rocm-smi`) | measured |
+| Per-process VRAM (NVIDIA) | Driver compute-apps query | measured |
+| KV cache | `arch × context × dtype` (formula) | **estimated** — exact once `--kv-cache-type` matches your cache |
+| Weights (Ollama) | `process VRAM − KV` | **estimated** |
+| Weights (llama.cpp) | GGUF file size | **estimated** (assumes full GPU offload) |
+| Max context before OOM | `free ÷ KV-bytes-per-token` | **estimated**, linear |
+
+Everything in the estimated rows is labelled `estimated` in the output. See the
+[FAQ](docs/FAQ.md) if your numbers don’t match what you expect.
 
 ## Supported
 
 | GPU vendor | via         | device totals | per-process | notes |
 |------------|-------------|:---:|:---:|-------|
 | NVIDIA     | `nvidia-smi`| ✅ | ✅ | full support |
-| AMD        | `rocm-smi`  | ✅ | ❌ | per-process not collected in v0.1; footprint comes from the loader |
-
-The weights/KV split works on **both** vendors — it comes from the loader, not the
-driver. Per-process driver attribution (which process holds what) is NVIDIA-only in
-v0.1; on AMD the inference footprint is taken from the loader's reported VRAM, which
-is usually a single process anyway.
+| AMD        | `rocm-smi`  | ✅ | ❌ | per-process not collected in v1.0; footprint comes from the loader |
 
 | Loader   | via                       | model + VRAM | weights/KV split |
 |----------|---------------------------|:---:|:---:|
-| Ollama   | `/api/ps`, `/api/show`    | ✅ | ✅ (estimated from architecture) |
-| llama.cpp| `/props`                  | context only | ❌ (arch not exposed over HTTP) |
+| Ollama   | `/api/ps`, `/api/show`    | ✅ | ✅ (arch from the API) |
+| llama.cpp| `/props` + GGUF header    | ✅ (from GGUF) | ✅ (arch + weights from the GGUF file) |
 
 ## Limitations
 
 vramwatch is deliberately honest about what it can and can’t know:
 
-- **Weights/KV are estimated, not hooked.** v0.1 does not intercept the CUDA/HIP
-  allocator; it derives the split from the loader’s reported footprint plus the
-  model architecture. The KV formula is exact; the weights figure is the remainder.
-  Everything derived is labelled `estimated`.
-- **KV dtype is assumed f16.** Ollama doesn’t expose the cache type over its API. If
-  you run a quantized KV cache, the estimate is high (a q8 cache is half the size).
-- **AMD per-process VRAM is not collected in v0.1.** The tool does not query
-  `rocm-smi` for per-process data, so on AMD the inference footprint always comes
+- **Weights/KV are estimated, not allocator-hooked.** v1.0 does not intercept the
+  CUDA/HIP allocator; it derives the split from the loader’s reported footprint (or
+  the GGUF file) plus the model architecture. The KV formula is exact for a given
+  dtype; weights are the remainder (Ollama) or the file size (llama.cpp).
+- **KV dtype defaults to f16.** vramwatch can’t read the loader’s cache-type setting,
+  so pass `--kv-cache-type q8_0` (or set `VRAMWATCH_KV_CACHE_TYPE`) if you quantized
+  it. With the right dtype the KV figure is exact.
+- **llama.cpp weights assume full GPU offload.** The GGUF file size ≈ VRAM weights
+  only when every layer is on the GPU; with partial offload it over-reports weights.
+- **AMD per-process VRAM is not collected.** On AMD the inference footprint comes
   from the loader’s reported VRAM (the weights/KV split still works). Per-process
   driver attribution is NVIDIA-only for now.
-- **llama.cpp** doesn’t expose VRAM or architecture over HTTP, so it contributes the
-  model name and context length but no weights/KV split.
 - **Prediction is linear** in the KV cache and holds weights/overhead constant — a
   good planning estimate, not a guarantee.
 
-Roadmap items that lift these: allocator-level attribution, KV-dtype detection,
-richer ROCm per-process data, vLLM/MLX providers, Apple Metal.
+**Roadmap:** allocator-level attribution, KV-dtype auto-detection, ROCm per-process
+data, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
+
+## Docs
+
+- [Methodology](docs/METHODOLOGY.md) — the attribution model and KV math in depth.
+- [FAQ](docs/FAQ.md) — “why estimated?”, “my numbers don’t match `nvidia-smi`”, etc.
+- [Contributing](CONTRIBUTING.md) — adding GPU/loader providers.
 
 ## Building
 
 ```sh
 make build     # -> ./vramwatch
 make test
-make card      # regenerate the sample scorecard in docs/sample/
+make card      # regenerate the sample scorecard
+make gif       # regenerate the demo GIF
 ```
 
 No third-party dependencies — standard library only.
-
-## Contributing
-
-New GPU/loader providers are the most valuable contributions. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

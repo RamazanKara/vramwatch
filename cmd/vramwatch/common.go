@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/RamazanKara/vramwatch/internal/engine"
@@ -69,8 +71,9 @@ func isTerminal(f *os.File) bool {
 	return fi.Mode()&os.ModeCharDevice != 0
 }
 
-// collect resolves the source spec and builds a snapshot from it.
-func collect(ctx context.Context, spec string) (model.Snapshot, source.Source, error) {
+// collect resolves the source spec and builds a snapshot from it. kvBits, when
+// non-zero, overrides the KV cache element size (from --kv-cache-type).
+func collect(ctx context.Context, spec string, kvBits int) (model.Snapshot, source.Source, error) {
 	src, err := source.FromSpec(spec)
 	if err != nil {
 		return model.Snapshot{}, nil, err
@@ -79,8 +82,38 @@ func collect(ctx context.Context, spec string) (model.Snapshot, source.Source, e
 	if err != nil {
 		return model.Snapshot{}, src, err
 	}
-	snap := engine.Build(gpus, models, engine.Options{Version: Version, Now: time.Now()})
+	snap := engine.Build(gpus, models, engine.Options{Version: Version, Now: time.Now(), KVBits: kvBits})
 	return snap, src, nil
+}
+
+// addKVFlag registers the shared --kv-cache-type flag.
+func addKVFlag(fs *flag.FlagSet) *string {
+	return fs.String("kv-cache-type", "",
+		"KV cache dtype for an accurate estimate: f16|bf16|f32|q8_0|q5_0|q4_0 (or $VRAMWATCH_KV_CACHE_TYPE)")
+}
+
+// resolveKVBits maps a --kv-cache-type value (falling back to the env var) to a
+// bit width; 0 means "leave each model's own dtype".
+func resolveKVBits(flagVal string) (int, error) {
+	if flagVal == "" {
+		flagVal = os.Getenv("VRAMWATCH_KV_CACHE_TYPE")
+	}
+	switch strings.ToLower(strings.TrimSpace(flagVal)) {
+	case "":
+		return 0, nil
+	case "f32", "fp32", "float32":
+		return 32, nil
+	case "f16", "fp16", "float16", "bf16", "bfloat16":
+		return 16, nil
+	case "q8_0", "q8":
+		return 8, nil
+	case "q5_0", "q5_1", "q5":
+		return 5, nil
+	case "q4_0", "q4_1", "q4", "iq4_nl":
+		return 4, nil
+	default:
+		return 0, fmt.Errorf("unknown --kv-cache-type %q (try f16, q8_0, q5_0, q4_0, f32)", flagVal)
+	}
 }
 
 // renderConsole prints the standard console table.

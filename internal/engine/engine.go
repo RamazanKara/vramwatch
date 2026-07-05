@@ -22,6 +22,10 @@ type Options struct {
 	Host         string
 	Now          time.Time // injectable for deterministic output; zero => time.Now()
 	OOMThreshold uint64    // 0 => DefaultOOMThreshold
+	// KVBits overrides the KV-cache element size (in bits) for every model, so a
+	// quantized cache (q8_0=8, q4_0=4) is estimated correctly instead of the
+	// f16 default. 0 leaves each model's own value untouched.
+	KVBits int
 }
 
 // maxPredictTokens caps projected context so a uint64->int narrowing can never
@@ -103,7 +107,7 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 
 	// Aggregate reported weights and KV (reported-or-estimated) across models.
 	var reportedWeights, kvBytes, sumModelVRAM uint64
-	weightsReported, kvReported := false, false
+	weightsReported, kvReported, anyModelEstimated := false, false, false
 	for _, m := range models {
 		if m.WeightsBytes > 0 {
 			reportedWeights += m.WeightsBytes
@@ -115,16 +119,24 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 			kvReported = true
 		}
 		sumModelVRAM += m.VRAMBytes
+		if m.Estimated {
+			anyModelEstimated = true // e.g. weights derived from a GGUF file size
+		}
 		if !m.Arch.KnownForKV() && m.KVCacheBytes == 0 {
 			warnings = append(warnings, fmt.Sprintf("model %q: architecture unknown, KV cache not estimated", m.Name))
 		}
 	}
 
 	// Inference-process footprint on this device: prefer per-process driver
-	// figures for the loader PIDs; else the loader's own VRAM total.
+	// figures for the loader PIDs; else the loader's own reported VRAM total;
+	// else (e.g. llama.cpp, which reports no VRAM) derive it from the model's
+	// weights plus the estimated KV cache.
 	infProc := procUsedFor(gpu, models)
 	if infProc == 0 {
 		infProc = sumModelVRAM
+	}
+	if infProc == 0 {
+		infProc = reportedWeights + kvBytes
 	}
 	if infProc > used {
 		infProc = used
@@ -166,7 +178,7 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 	loaderSrc := loaderSource(models)
 	segs := make([]model.Segment, 0, 5)
 	if weights > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindWeights, Label: model.KindWeights.DefaultLabel(), Bytes: weights, Source: loaderSrc, Estimated: weightsEstimated})
+		segs = append(segs, model.Segment{Kind: model.KindWeights, Label: model.KindWeights.DefaultLabel(), Bytes: weights, Source: loaderSrc, Estimated: weightsEstimated || anyModelEstimated})
 	}
 	if kv > 0 {
 		segs = append(segs, model.Segment{Kind: model.KindKVCache, Label: model.KindKVCache.DefaultLabel(), Bytes: kv, Source: loaderSrc, Estimated: !kvReported})
@@ -281,6 +293,9 @@ func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (C
 	if pu := procUsedFor(gpu, models); pu > 0 {
 		footprint = pu
 	}
+	if footprint == 0 {
+		footprint = m.WeightsBytes + curKV // e.g. llama.cpp: weights from GGUF + KV
+	}
 	var base uint64
 	if footprint > curKV {
 		base = footprint - curKV
@@ -331,6 +346,9 @@ func Build(gpus []model.GPU, models []model.LoaderModel, opts Options) model.Sna
 		Host:      host,
 		Timestamp: now,
 	}
+	if opts.KVBits > 0 {
+		models = withKVBits(models, opts.KVBits)
+	}
 	for _, g := range gpus {
 		devModels := modelsForDevice(g, gpus, models)
 		segs, warns := AttributeGPU(g, devModels)
@@ -345,6 +363,22 @@ func Build(gpus []model.GPU, models []model.LoaderModel, opts Options) model.Sna
 		snap.Breakdowns = append(snap.Breakdowns, b)
 	}
 	return snap
+}
+
+// withKVBits returns a copy of models with every model's KV element size set to
+// bits, so a user-declared quantized KV cache is estimated with the right dtype.
+func withKVBits(models []model.LoaderModel, bits int) []model.LoaderModel {
+	out := make([]model.LoaderModel, len(models))
+	copy(out, models)
+	for i := range out {
+		if out[i].Arch.KnownForKV() {
+			out[i].Arch.KVTypeBits = bits
+			// The reported/estimated KV must be recomputed under the new dtype,
+			// so drop any precomputed value and let the engine derive it.
+			out[i].KVCacheBytes = 0
+		}
+	}
+	return out
 }
 
 // modelsForDevice returns the models mapped to device g. A model with

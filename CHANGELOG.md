@@ -6,7 +6,34 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-05
+
+Focus: reduce the estimation limitations and document the method in full.
+
+### Added
+- **KV cache dtype support** — `--kv-cache-type` (and `$VRAMWATCH_KV_CACHE_TYPE`)
+  so a quantized cache (`q8_0`, `q4_0`, `f32`, …) is estimated correctly instead of
+  silently assuming f16.
+- **GGUF header parsing** (`internal/gguf`) — vramwatch reads the model file’s
+  header directly, giving **llama.cpp a real weights/KV split** for the first time
+  (architecture + weight size), not just a context number.
+- Weights derived from a GGUF file size are labelled `estimated`, and attribution
+  derives the footprint from weights+KV when a loader (llama.cpp) reports no VRAM.
+- Animated demo GIF hero, generated reproducibly (`make gif`).
+
+### Documentation
+- New [METHODOLOGY.md](docs/METHODOLOGY.md) — the attribution model and KV math in
+  depth, with a worked example and a measured-vs-estimated breakdown.
+- New [FAQ.md](docs/FAQ.md).
+- README rewritten: a comparison to `nvidia-smi`/`nvtop`/`nvitop`, an accuracy
+  table, the new `--kv-cache-type` workflow, and trimmed, honest limitations.
+
 ## [0.1.0] - 2026-07-05
+
+Initial public release. Includes, on top of the core tool, the fixes from a full
+adversarial code review (correct exit codes, robust `nvidia-smi`/`rocm-smi`
+parsing, reported-weights-win attribution, known-arch prediction fallback,
+`install.sh` fallback, Windows ANSI).
 
 First public release.
 
@@ -29,5 +56,6 @@ First public release.
 - `demo` and `mock:PATH` data sources for hardware-free demos, tests, and CI.
 - Single static, dependency-free binary for Linux, macOS, and Windows.
 
-[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/RamazanKara/vramwatch/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/RamazanKara/vramwatch/releases/tag/v0.1.0

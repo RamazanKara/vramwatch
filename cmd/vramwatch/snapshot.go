@@ -16,6 +16,7 @@ func cmdSnapshot(args []string) error {
 	asJSON := fs.Bool("json", false, "print machine-readable JSON")
 	svgOut := fs.String("svg", "", "write an SVG scorecard to this path ('-' for stdout)")
 	static := fs.Bool("static", false, "omit host/timestamp for reproducible output (docs, tests)")
+	kvType := addKVFlag(fs)
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "vramwatch snapshot — one-shot VRAM breakdown\n\nFLAGS")
@@ -24,8 +25,12 @@ func cmdSnapshot(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	kvBits, err := resolveKVBits(*kvType)
+	if err != nil {
+		return err
+	}
 
-	snap, _, err := collect(context.Background(), *src)
+	snap, _, err := collect(context.Background(), *src, kvBits)
 	if err != nil {
 		return err
 	}

@@ -19,12 +19,17 @@ func cmdWatch(args []string) error {
 	interval := fs.Duration("interval", time.Second, "refresh interval")
 	barWidth := fs.Int("bar-width", 48, "width of the stacked bar in cells")
 	once := fs.Bool("once", false, "render a single frame and exit (useful for captures/CI)")
+	kvType := addKVFlag(fs)
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "vramwatch watch — live stacked VRAM bar\n\nFLAGS")
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	kvBits, err := resolveKVBits(*kvType)
+	if err != nil {
 		return err
 	}
 	if *interval < 100*time.Millisecond {
@@ -39,7 +44,7 @@ func cmdWatch(args []string) error {
 	opts := render.Options{Color: color, BarWidth: *barWidth}
 
 	if *once {
-		return renderFrame(context.Background(), s, opts, false, "")
+		return renderFrame(context.Background(), s, opts, kvBits, false, "")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -53,7 +58,7 @@ func cmdWatch(args []string) error {
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
 
-	if err := renderFrame(ctx, s, opts, true, footer); err != nil {
+	if err := renderFrame(ctx, s, opts, kvBits, true, footer); err != nil {
 		return err
 	}
 	for {
@@ -61,7 +66,7 @@ func cmdWatch(args []string) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := renderFrame(ctx, s, opts, true, footer); err != nil {
+			if err := renderFrame(ctx, s, opts, kvBits, true, footer); err != nil {
 				return err
 			}
 		}
@@ -70,12 +75,12 @@ func cmdWatch(args []string) error {
 
 // renderFrame collects one snapshot and paints it. When clear is true it first
 // clears the screen (the live loop); when false it prints in place (--once).
-func renderFrame(ctx context.Context, s source.Source, opts render.Options, clear bool, footer string) error {
+func renderFrame(ctx context.Context, s source.Source, opts render.Options, kvBits int, clear bool, footer string) error {
 	gpus, models, err := s.Collect(ctx)
 	if err != nil {
 		return err
 	}
-	snap := engine.Build(gpus, models, engine.Options{Version: Version, Now: time.Now()})
+	snap := engine.Build(gpus, models, engine.Options{Version: Version, Now: time.Now(), KVBits: kvBits})
 	var out string
 	if clear {
 		out = "\x1b[H\x1b[2J" // home + clear

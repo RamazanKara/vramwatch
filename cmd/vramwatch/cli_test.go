@@ -149,6 +149,63 @@ func TestCmdSnapshotBadSource(t *testing.T) {
 	}
 }
 
+func TestResolveKVBits(t *testing.T) {
+	t.Setenv("VRAMWATCH_KV_CACHE_TYPE", "") // isolate from the ambient env
+	cases := map[string]int{"": 0, "f16": 16, "BF16": 16, "q8_0": 8, "q4_0": 4, "f32": 32, "q5_0": 5}
+	for in, want := range cases {
+		got, err := resolveKVBits(in)
+		if err != nil || got != want {
+			t.Errorf("resolveKVBits(%q) = %d, %v; want %d", in, got, err, want)
+		}
+	}
+	if _, err := resolveKVBits("bogus"); err == nil {
+		t.Error("bogus dtype should error")
+	}
+}
+
+// kvSegmentBytes runs snapshot --json with extra args and returns the KV-cache
+// segment size of the first breakdown.
+func kvSegmentBytes(t *testing.T, extra ...string) uint64 {
+	t.Helper()
+	out, err := capture(t, func() error {
+		return cmdSnapshot(append([]string{"--source", oomMock, "--json"}, extra...))
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var snap struct {
+		Breakdowns []struct {
+			Segments []struct {
+				Kind  string `json:"kind"`
+				Bytes uint64 `json:"bytes"`
+			} `json:"segments"`
+		} `json:"breakdowns"`
+	}
+	if err := json.Unmarshal([]byte(out), &snap); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range snap.Breakdowns[0].Segments {
+		if s.Kind == "kv_cache" {
+			return s.Bytes
+		}
+	}
+	t.Fatal("no kv_cache segment found")
+	return 0
+}
+
+func TestCmdKVCacheType(t *testing.T) {
+	t.Setenv("VRAMWATCH_KV_CACHE_TYPE", "")
+	f16 := kvSegmentBytes(t)
+	q8 := kvSegmentBytes(t, "--kv-cache-type", "q8_0")
+	q4 := kvSegmentBytes(t, "--kv-cache-type", "q4_0")
+	if q8*2 != f16 {
+		t.Errorf("q8_0 KV (%d) should be half of f16 (%d)", q8, f16)
+	}
+	if q4*4 != f16 {
+		t.Errorf("q4_0 KV (%d) should be a quarter of f16 (%d)", q4, f16)
+	}
+}
+
 func TestCmdHelpReturnsErrHelp(t *testing.T) {
 	// flag prints usage to stderr; silence it for a clean test run.
 	old := os.Stderr

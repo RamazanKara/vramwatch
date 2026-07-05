@@ -37,6 +37,7 @@ func cmdPredict(args []string) error {
 	src := fs.String("source", "", "data source: live | demo | mock:PATH | PATH.json")
 	target := fs.Int("context", 0, "target context length in tokens to test for fit (0 to skip)")
 	asJSON := fs.Bool("json", false, "print machine-readable JSON")
+	kvType := addKVFlag(fs)
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stderr, "vramwatch predict — will a context fit, and what's the max before OOM?\n\nFLAGS")
@@ -45,8 +46,12 @@ func cmdPredict(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	kvBits, err := resolveKVBits(*kvType)
+	if err != nil {
+		return err
+	}
 
-	snap, _, err := collect(context.Background(), *src)
+	snap, _, err := collect(context.Background(), *src, kvBits)
 	if err != nil {
 		return err
 	}

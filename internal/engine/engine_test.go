@@ -222,6 +222,56 @@ func TestPredictPrefersKnownArch(t *testing.T) {
 	}
 }
 
+// A user-declared quantized KV cache (q8_0 = 8 bits) must halve the KV estimate.
+func TestKVBitsOverride(t *testing.T) {
+	gpu, models := scenario70B()
+	f16 := Build([]model.GPU{gpu}, models, Options{Version: "t"})
+	q8 := Build([]model.GPU{gpu}, models, Options{Version: "t", KVBits: 8})
+
+	kvF16, _ := f16.Breakdowns[0].Segment(model.KindKVCache)
+	kvQ8, _ := q8.Breakdowns[0].Segment(model.KindKVCache)
+	if kvQ8.Bytes*2 != kvF16.Bytes {
+		t.Errorf("q8 KV (%s) should be half of f16 KV (%s)", model.HumanBytes(kvQ8.Bytes), model.HumanBytes(kvF16.Bytes))
+	}
+	// The override must also flow into the prediction's per-token figure.
+	if q8.Breakdowns[0].Prediction.KVBytesPerToken*2 != f16.Breakdowns[0].Prediction.KVBytesPerToken {
+		t.Error("prediction kv/token should halve under q8")
+	}
+}
+
+// llama.cpp reports weights (from GGUF) but no VRAM total; attribution must
+// still produce a real weights/KV split from the derived footprint.
+func TestLlamaCppFootprintFallback(t *testing.T) {
+	gpu := model.GPU{Index: 0, Vendor: model.VendorNVIDIA, TotalBytes: 16 * model.GiB, UsedBytes: 10 * model.GiB, FreeBytes: 6 * model.GiB}
+	m := model.LoaderModel{
+		Loader: "llama.cpp", Name: "Meta-Llama-3-8B.Q4_K_M", GPUIndex: 0,
+		WeightsBytes:  5 * model.GiB, // from the GGUF file size; no VRAMBytes reported
+		ContextTokens: 8192,
+		Arch:          model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
+	}
+	segs, _ := AttributeGPU(gpu, []model.LoaderModel{m})
+	var sum uint64
+	kinds := map[model.SegmentKind]uint64{}
+	for _, s := range segs {
+		sum += s.Bytes
+		kinds[s.Kind] = s.Bytes
+	}
+	if sum != gpu.TotalBytes {
+		t.Fatalf("segments sum %d != total %d", sum, gpu.TotalBytes)
+	}
+	if kinds[model.KindWeights] != 5*model.GiB {
+		t.Errorf("weights should be the GGUF-reported 5 GiB, got %s", model.HumanBytes(kinds[model.KindWeights]))
+	}
+	// KV at 8192 for llama-8b f16 = 1 GiB.
+	if kinds[model.KindKVCache] != 1*model.GiB {
+		t.Errorf("kv should be 1 GiB, got %s", model.HumanBytes(kinds[model.KindKVCache]))
+	}
+	// Prediction must work for llama.cpp too (arch known via GGUF).
+	if p := Predict(gpu, []model.LoaderModel{m}, DefaultOOMThreshold); p == nil {
+		t.Error("expected a prediction for a GGUF-backed llama.cpp model")
+	}
+}
+
 func TestBuildDeterministic(t *testing.T) {
 	gpu, models := scenario70B()
 	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)

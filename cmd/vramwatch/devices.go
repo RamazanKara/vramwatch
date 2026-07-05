@@ -36,7 +36,7 @@ func cmdDevices(args []string) error {
 	}
 
 	// Devices from the chosen source.
-	snap, s, err := collect(ctx, *src)
+	snap, s, err := collect(ctx, *src, 0)
 	if err != nil {
 		return err
 	}

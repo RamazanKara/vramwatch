@@ -28,18 +28,22 @@ COMMANDS
   help       Show this help
 
 COMMON FLAGS
-  --source <spec>   Data source: "live" (default), "mock:PATH", or a .json path
-  --no-color        Disable ANSI colour   (also honours NO_COLOR)
-  --color           Force ANSI colour even when not a TTY
+  --source <spec>       Data source: "live" (default), "demo", "mock:PATH", or a .json path
+  --kv-cache-type <t>   KV cache dtype for an accurate estimate: f16|bf16|f32|q8_0|q5_0|q4_0
+                        (or set $VRAMWATCH_KV_CACHE_TYPE)
+  --no-color            Disable ANSI colour   (also honours NO_COLOR)
+  --color               Force ANSI colour even when not a TTY
 
 EXAMPLES
   vramwatch watch
+  vramwatch watch --kv-cache-type q8_0
   vramwatch snapshot --json
   vramwatch snapshot --svg card.svg
   vramwatch predict --context 32768
   vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json
 
-Docs: https://github.com/RamazanKara/vramwatch
+Docs:        https://github.com/RamazanKara/vramwatch
+Methodology: https://github.com/RamazanKara/vramwatch/blob/master/docs/METHODOLOGY.md
 `
 
 func main() {

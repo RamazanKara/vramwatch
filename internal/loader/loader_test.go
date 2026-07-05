@@ -1,10 +1,14 @@
 package loader
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 
@@ -161,6 +165,72 @@ func TestLlamaCppOverHTTP(t *testing.T) {
 	}
 	if len(ms) != 1 || ms[0].Name != "Meta-Llama-3-8B-Instruct.Q4_K_M" || ms[0].ContextTokens != 8192 {
 		t.Errorf("llama.cpp model wrong: %+v", ms)
+	}
+}
+
+// writeMinimalGGUF writes a tiny valid GGUF (llama arch) for the llama.cpp test.
+func writeMinimalGGUF(t *testing.T) string {
+	t.Helper()
+	var b bytes.Buffer
+	wu32 := func(v uint32) { binary.Write(&b, binary.LittleEndian, v) }
+	wu64 := func(v uint64) { binary.Write(&b, binary.LittleEndian, v) }
+	wstr := func(s string) { wu64(uint64(len(s))); b.WriteString(s) }
+	kvU32 := func(k string, v uint32) { wstr(k); wu32(4); wu32(v) }
+	kvStr := func(k, v string) { wstr(k); wu32(8); wstr(v) }
+
+	b.WriteString("GGUF")
+	wu32(3) // version
+	wu64(0) // tensor_count
+	wu64(6) // metadata_kv_count
+	kvStr("general.architecture", "llama")
+	kvU32("llama.block_count", 32)
+	kvU32("llama.attention.head_count", 32)
+	kvU32("llama.attention.head_count_kv", 8)
+	kvU32("llama.embedding_length", 4096)
+	kvU32("llama.context_length", 8192)
+
+	path := filepath.Join(t.TempDir(), "model.gguf")
+	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLlamaCppWithGGUF(t *testing.T) {
+	ggufPath := writeMinimalGGUF(t)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/props", func(w http.ResponseWriter, r *http.Request) {
+		// JSON-encode the model path so backslashes (Windows temp dirs) are escaped.
+		mp, _ := json.Marshal(ggufPath)
+		w.Write([]byte(`{"default_generation_settings":{"n_ctx":4096},"model_path":` + string(mp) + `}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ms, err := NewLlamaCpp(srv.URL).Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != 1 {
+		t.Fatalf("want 1 model, got %d", len(ms))
+	}
+	m := ms[0]
+	if !m.Arch.KnownForKV() || m.Arch.Layers != 32 || m.Arch.KVHeads != 8 || m.Arch.HeadDim != 128 {
+		t.Errorf("GGUF arch not applied: %+v", m.Arch)
+	}
+	if m.WeightsBytes == 0 {
+		t.Error("WeightsBytes should be the GGUF file size")
+	}
+	if m.ContextTokens != 4096 { // from /props
+		t.Errorf("ContextTokens = %d, want 4096", m.ContextTokens)
+	}
+	if m.ContextMax != 8192 { // from GGUF
+		t.Errorf("ContextMax = %d, want 8192", m.ContextMax)
+	}
+	// The engine can now compute a real KV cache for a llama.cpp model.
+	if engine.KVCacheBytes(m.Arch, m.ContextTokens) == 0 {
+		t.Error("expected a KV estimate for the GGUF-backed llama.cpp model")
 	}
 }
 
