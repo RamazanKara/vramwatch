@@ -196,7 +196,7 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 
 // procUsedFor returns the driver-measured VRAM of the inference process on this
 // device. It matches first by PID (when a loader reports one), then by process
-// name (e.g. an "ollama" / "llama-server" process) — which is what lets
+// name (e.g. an "ollama" / "llama-server" process), which lets
 // per-process VRAM stand in for a footprint the loader doesn't self-report.
 // Returns 0 when nothing matches (the caller falls back to loader-reported VRAM).
 func procUsedFor(gpu model.GPU, models []model.LoaderModel) uint64 {
@@ -363,8 +363,8 @@ func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (C
 }
 
 // primaryModel returns the largest-VRAM resident model whose architecture is
-// known well enough to compute a KV cache — the one predictions and fit checks
-// are about. A bigger model with an unknown architecture is skipped in favour
+// known well enough to compute a KV cache. That is the model predictions and
+// fit checks are about. A bigger model with an unknown architecture is skipped in favour
 // of a smaller, fully-known one rather than giving up entirely.
 func primaryModel(models []model.LoaderModel) (model.LoaderModel, bool) {
 	var best model.LoaderModel
@@ -415,7 +415,7 @@ func Build(gpus []model.GPU, models []model.LoaderModel, opts Options) model.Sna
 // withKVBits returns a copy of models with the KV element size set to bits for
 // every model whose KV cache is *estimated* (KVCacheBytes == 0), so a
 // user-declared quantized cache is estimated with the right dtype. A loader that
-// reported an exact KVCacheBytes is left untouched — a measured value is never
+// reported an exact KVCacheBytes is left untouched; a measured value is never
 // second-guessed by the flag.
 func withKVBits(models []model.LoaderModel, bits int) []model.LoaderModel {
 	out := make([]model.LoaderModel, len(models))

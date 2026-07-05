@@ -78,7 +78,7 @@ func LoadMock(path string) (*Mock, error) {
 
 // Demo synthesises a 24 GiB card running an 8B model whose KV cache grows with
 // wall-clock time, looping. It exists so `vramwatch watch --source demo` shows
-// the headline behaviour — the KV cache eating free VRAM until OOM — with no
+// the headline behaviour (the KV cache eating free VRAM until OOM) with no
 // GPU present. It is a demo aid, never a measurement.
 type Demo struct {
 	Start time.Time

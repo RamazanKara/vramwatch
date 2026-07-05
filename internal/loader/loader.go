@@ -1,6 +1,6 @@
 // Package loader queries local inference servers (Ollama, llama.cpp) over HTTP
-// to learn which models are resident and, where possible, their architecture —
-// the information that lets the engine split VRAM into weights vs KV cache.
+// to learn which models are resident and, where possible, their architecture.
+// That information lets the engine split VRAM into weights vs KV cache.
 package loader
 
 import (

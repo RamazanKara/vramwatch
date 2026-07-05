@@ -19,7 +19,7 @@ func cmdSnapshot(args []string) error {
 	kvType := addKVFlag(fs)
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "vramwatch snapshot — one-shot VRAM breakdown\n\nFLAGS")
+		fmt.Fprintln(os.Stderr, "vramwatch snapshot: one-shot VRAM breakdown\n\nFLAGS")
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {

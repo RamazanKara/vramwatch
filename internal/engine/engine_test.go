@@ -333,9 +333,9 @@ func TestProcUsedForNameMatch(t *testing.T) {
 	llamaModel := []model.LoaderModel{{Loader: "llama.cpp", Name: "x"}}
 	gpu := model.GPU{Procs: []model.Proc{
 		{PID: 1, Name: "llama-server", UsedBytes: 8 * model.GiB},             // the real one
-		{PID: 2, Name: "/home/llama/python", UsedBytes: 6 * model.GiB},       // basename "python" — no match
+		{PID: 2, Name: "/home/llama/python", UsedBytes: 6 * model.GiB},       // basename "python", no match
 		{PID: 3, Name: "llama_tool.py", UsedBytes: 5 * model.GiB},            // not a "llama-" prefix
-		{PID: 4, Name: `C:\Users\llama\thing.exe`, UsedBytes: 7 * model.GiB}, // basename "thing" — no match
+		{PID: 4, Name: `C:\Users\llama\thing.exe`, UsedBytes: 7 * model.GiB}, // basename "thing", no match
 	}}
 	if got := procUsedFor(gpu, llamaModel); got != 8*model.GiB {
 		t.Errorf("footprint = %s, want 8 GiB (largest single loader match, no bystanders)", model.HumanBytes(got))

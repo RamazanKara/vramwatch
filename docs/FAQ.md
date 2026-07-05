@@ -2,7 +2,7 @@
 
 ### Why does it say `estimated`?
 
-Because that figure was **derived**, not measured. vramwatch does not hook the
+Because that figure was derived, not measured. vramwatch does not hook the
 CUDA/HIP allocator (yet), so weights and the KV cache are computed from the model’s
 architecture and reported footprint. The device total/used/free and NVIDIA
 per-process VRAM *are* measured. See [METHODOLOGY.md](METHODOLOGY.md) for exactly
@@ -10,7 +10,7 @@ what falls in each bucket.
 
 ### My KV cache looks 2× too big
 
-You’re probably running a **quantized KV cache** and vramwatch is assuming f16.
+You’re probably running a quantized KV cache and vramwatch is assuming f16.
 Tell it the dtype:
 
 ```sh
@@ -23,21 +23,21 @@ your `--cache-type-k` / `--cache-type-v`.
 
 ### The numbers don’t match `nvidia-smi`
 
-The **device total/used/free** should match `nvidia-smi` closely — vramwatch reads
-those from it. The **split within a process** (weights vs KV vs compute) is what
+The device total/used/free should match `nvidia-smi` closely, since vramwatch reads
+those from it. The split within a process (weights vs KV vs compute) is what
 `nvidia-smi` doesn’t provide and vramwatch estimates. If the *device* numbers
 disagree, check that you’re looking at the same GPU index and that no other tool is
 allocating between samples.
 
 ### `weights` looks wrong for my llama.cpp model
 
-vramwatch uses the **GGUF file size** as the weights estimate, which only equals VRAM
+vramwatch uses the GGUF file size as the weights estimate, which only equals VRAM
 weights when the whole model is offloaded to the GPU. If you ran with partial offload
 (`-ngl` less than the layer count), the file size over-states GPU weights.
 
 ### Does AMD per-process VRAM work?
 
-On **Linux**, yes — vramwatch reads it from `/proc/<pid>/fdinfo` (the same DRM
+On Linux, yes. vramwatch reads it from `/proc/<pid>/fdinfo` (the same DRM
 interface `nvtop`/`amdgpu_top` use), so it attributes VRAM to the real
 `ollama`/`llama-server` process. It only sees processes you have permission to read,
 so if your loader runs as another user (e.g. a systemd service), run vramwatch as
@@ -54,15 +54,15 @@ vramwatch devices
 It lists which GPU tools (`nvidia-smi`, `rocm-smi`) and loaders (Ollama, llama.cpp)
 were found. Common causes:
 
-- **Ollama** isn’t serving on `127.0.0.1:11434` — set `OLLAMA_HOST`.
-- **llama.cpp** isn’t serving on `127.0.0.1:8080` — set `LLAMACPP_HOST`.
-- The model isn’t actually loaded (Ollama unloads idle models) — send it a request
+- **Ollama** isn’t serving on `127.0.0.1:11434`. Set `OLLAMA_HOST`.
+- **llama.cpp** isn’t serving on `127.0.0.1:8080`. Set `LLAMACPP_HOST`.
+- The model isn’t actually loaded (Ollama unloads idle models), so send it a request
   first.
 
 ### Does it support vLLM / MLX / TGI / LM Studio?
 
-Not yet — Ollama and llama.cpp are supported today. vLLM, MLX and Apple Metal are
-on the roadmap. A new loader is a small, self-contained contribution — see
+Not yet. Ollama and llama.cpp are supported today. vLLM, MLX and Apple Metal are
+on the roadmap. A new loader is a small, self-contained contribution; see
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ### Does it work without a GPU?
@@ -85,5 +85,5 @@ dashboards. `snapshot --svg` writes a shareable scorecard.
 
 The KV growth is exact for an f16/bf16/f32 cache (and a small conservative
 over-estimate for a quantized one), so the *max context* estimate is good when
-weights and overhead stay constant. It’s a planning number, not a guarantee — a
+weights and overhead stay constant. It’s a planning number, not a guarantee: a
 fragmenting allocator or a second process can still OOM you earlier.

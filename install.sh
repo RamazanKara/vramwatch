@@ -55,7 +55,7 @@ tar -xzf "$tmp/$asset" -C "$tmp" vramwatch || die "extract failed"
 
 # Choose a writable install dir. Try the privileged dir first (non-interactive
 # sudo so a piped `curl | sh` never blocks on a password prompt); on any
-# failure — no sudo, not a sudoer, password required — fall back to ~/.local/bin.
+# failure (no sudo, not a sudoer, or a password is required) fall back to ~/.local/bin.
 if [ -w "$INSTALL_DIR" ] || [ "$(id -u)" -eq 0 ]; then
   install -m 0755 "$tmp/vramwatch" "$INSTALL_DIR/vramwatch"
 elif have sudo && sudo -n install -m 0755 "$tmp/vramwatch" "$INSTALL_DIR/vramwatch" 2>/dev/null; then

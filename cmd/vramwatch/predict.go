@@ -40,7 +40,7 @@ func cmdPredict(args []string) error {
 	kvType := addKVFlag(fs)
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "vramwatch predict — will a context fit, and what's the max before OOM?\n\nFLAGS")
+		fmt.Fprintln(os.Stderr, "vramwatch predict: will a context fit, and what's the max before OOM?\n\nFLAGS")
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {

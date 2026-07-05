@@ -16,7 +16,7 @@ func cmdDevices(args []string) error {
 	src := fs.String("source", "", "data source to enumerate: live | demo | mock:PATH | PATH.json")
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "vramwatch devices — detected GPUs and inference loaders\n\nFLAGS")
+		fmt.Fprintln(os.Stderr, "vramwatch devices: detected GPUs and inference loaders\n\nFLAGS")
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {

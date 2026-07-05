@@ -98,7 +98,7 @@ func addKVFlag(fs *flag.FlagSet) *string {
 // Block-quantized GGML formats store a per-block f16 scale (and an f16 min for
 // the _1 variants) over 32 elements, so the true cost is q8_0=8.5, q5_0=5.5,
 // q5_1=6.0, q4_0=4.5, q4_1=5.0 bits/element. We round UP so the KV estimate is
-// conservative — an OOM predictor should never claim more headroom than exists.
+// conservative: an OOM predictor should never claim more headroom than exists.
 func resolveKVBits(flagVal string) (int, error) {
 	if flagVal == "" {
 		flagVal = os.Getenv("VRAMWATCH_KV_CACHE_TYPE")

@@ -41,7 +41,7 @@ func (l *LlamaCpp) Models(ctx context.Context) ([]model.LoaderModel, error) {
 		return nil, err
 	}
 	models := parseLlamaProps(props)
-	// Enrich with GGUF metadata — this is what gives llama.cpp a real weights/KV
+	// Enrich with GGUF metadata. This is what gives llama.cpp a real weights/KV
 	// split, since /props exposes neither VRAM nor architecture. Only attempt the
 	// read when the server is on THIS host: props.ModelPath is a path as seen by
 	// the server, so reading it locally for a remote server could open a

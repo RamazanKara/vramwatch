@@ -22,7 +22,7 @@ func cmdWatch(args []string) error {
 	kvType := addKVFlag(fs)
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "vramwatch watch — live stacked VRAM bar\n\nFLAGS")
+		fmt.Fprintln(os.Stderr, "vramwatch watch: live stacked VRAM bar\n\nFLAGS")
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {

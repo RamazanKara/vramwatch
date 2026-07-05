@@ -1,5 +1,5 @@
 // Command vramwatch live-traces where every megabyte of your local-LLM VRAM
-// went — weights vs KV cache vs other apps — and predicts how much context
+// went (weights vs KV cache vs other apps) and predicts how much context
 // fits before you run out of memory.
 package main
 
@@ -14,7 +14,7 @@ import (
 // Version is set at build time via -ldflags "-X main.Version=...".
 var Version = "dev"
 
-const usage = `vramwatch — the flame graph for "why won't this model fit"
+const usage = `vramwatch: the flame graph for "why won't this model fit"
 
 USAGE
   vramwatch <command> [flags]
