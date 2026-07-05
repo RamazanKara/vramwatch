@@ -6,6 +6,22 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-05
+
+Focus: real-hardware validation → **vramwatch now works on Windows AMD**.
+
+### Added
+- **Windows GPU provider.** On Windows — where AMD's consumer driver ships no
+  `rocm-smi` — vramwatch reads the real VRAM size from the registry
+  (`HardwareInformation.qwMemorySize`) and usage from the built-in `GPU Adapter
+  Memory\Dedicated Usage` performance counter (`typeperf`). AMD and Intel GPUs are
+  now detected on Windows with no extra tooling; NVIDIA stays on `nvidia-smi`.
+  Validated against a real Radeon RX 7900 XT — total/used match ground truth exactly.
+- `VendorIntel`, and an OS-specific provider hook so more platforms can plug in.
+
+### Fixed
+- Before this, vramwatch reported "no GPUs detected" on Windows with an AMD card.
+
 ## [0.3.0] - 2026-07-05
 
 Focus: complete per-process attribution.
@@ -74,7 +90,8 @@ First public release.
 - `demo` and `mock:PATH` data sources for hardware-free demos, tests, and CI.
 - Single static, dependency-free binary for Linux, macOS, and Windows.
 
-[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/RamazanKara/vramwatch/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RamazanKara/vramwatch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RamazanKara/vramwatch/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RamazanKara/vramwatch/releases/tag/v0.1.0

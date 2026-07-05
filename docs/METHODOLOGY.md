@@ -12,12 +12,17 @@ as such.**
 
 For each GPU, vramwatch gathers:
 
-1. **Driver truth** — from `nvidia-smi` or `rocm-smi`:
-   - total / used / free VRAM for the device,
+1. **Driver / OS truth**:
+   - total / used / free VRAM for the device — from `nvidia-smi`, `rocm-smi`, or on
+     **Windows** the registry (`HardwareInformation.qwMemorySize` for the total) plus
+     the built-in `GPU Adapter Memory\Dedicated Usage` performance counter
+     (`typeperf`) for usage. This is what makes AMD work on Windows, where the
+     consumer driver ships no `rocm-smi`.
    - per-process VRAM: NVIDIA via `nvidia-smi --query-compute-apps`; AMD via the
      kernel’s `/proc/<pid>/fdinfo` DRM interface on Linux (deduplicated by DRM
      client id and mapped to a device by PCI address). The `fdinfo` reader is
-     vendor-neutral but only AMD devices are currently surfaced.
+     vendor-neutral but only AMD devices are currently surfaced. (Windows per-process
+     GPU counters over-report shared memory, so they aren’t used for the split.)
 
 2. **Loader truth** — which models are resident and their shape:
    - **Ollama**: `GET /api/ps` gives each model’s name and `size_vram`; `POST

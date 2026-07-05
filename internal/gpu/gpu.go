@@ -24,8 +24,10 @@ type Provider interface {
 	Sample(ctx context.Context) ([]model.GPU, error)
 }
 
-// All returns every built-in provider.
-func All() []Provider { return []Provider{&Nvidia{}, &AMD{}} }
+// All returns every built-in provider, including any OS-specific ones.
+func All() []Provider {
+	return append([]Provider{&Nvidia{}, &AMD{}}, platformProviders()...)
+}
 
 // DetectAvailable returns the providers usable on this host.
 func DetectAvailable(ctx context.Context) []Provider {

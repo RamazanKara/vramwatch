@@ -130,9 +130,10 @@ GPU 0  AMD Radeon RX 7900 XTX
 
 vramwatch combines two sources per GPU:
 
-1. **The driver** (`nvidia-smi` / `rocm-smi`) — device total/used/free, plus
-   per-process VRAM: from `nvidia-smi` on NVIDIA, and from the kernel’s
-   `/proc/<pid>/fdinfo` DRM interface for AMD on Linux. This is ground truth.
+1. **The driver / OS** — device total/used/free from `nvidia-smi`, `rocm-smi`, or
+   (on Windows) the registry + `GPU Adapter Memory` performance counter. Plus
+   per-process VRAM from `nvidia-smi` (NVIDIA) or `/proc/<pid>/fdinfo` (AMD/Linux).
+   This is ground truth.
 2. **The loader** — which models are resident and their architecture:
    - **Ollama** via `/api/ps` (VRAM) + `/api/show` (architecture).
    - **llama.cpp** via `/props` (context) + **reading the GGUF file’s header**
@@ -168,17 +169,19 @@ Everything in the estimated rows is labelled `estimated` in the output. See the
 
 ## Supported
 
-| GPU vendor | via                      | device totals | per-process | notes |
-|------------|--------------------------|:---:|:---:|-------|
-| NVIDIA     | `nvidia-smi`             | ✅ | ✅ | full support |
-| AMD        | `rocm-smi` + `/proc`     | ✅ | ✅ (Linux) | per-process via DRM `fdinfo` on Linux; loader VRAM elsewhere |
+| GPU vendor | via                                   | device totals | per-process | notes |
+|------------|---------------------------------------|:---:|:---:|-------|
+| NVIDIA     | `nvidia-smi`                          | ✅ | ✅ | full support |
+| AMD (Linux)| `rocm-smi` + `/proc` fdinfo           | ✅ | ✅ | per-process via the DRM `fdinfo` interface |
+| AMD (Windows)| registry + `typeperf` GPU counters  | ✅ | — | device totals; per-process is a roadmap item |
 
-Per-process VRAM comes from `nvidia-smi` on NVIDIA and from the kernel’s
-`/proc/<pid>/fdinfo` DRM interface for AMD on Linux (it reads processes you have
-permission to see — usually your own). It lets vramwatch use the *real* process
-footprint instead of the loader’s self-report. (The `fdinfo` reader is
-vendor-neutral, so Intel support is a small step once an Intel device provider
-lands — see the roadmap.)
+On Windows — where AMD's consumer driver doesn't ship `rocm-smi` — vramwatch reads
+the **real VRAM size from the registry** and **usage from the built-in `GPU Adapter
+Memory` performance counter** (`typeperf`), so an AMD card is detected with no extra
+tooling. This was validated against a real Radeon RX 7900 XT (numbers match the
+registry and the counter exactly). Per-process VRAM on NVIDIA comes from
+`nvidia-smi`, and on AMD/Linux from `/proc/<pid>/fdinfo`; it lets vramwatch use the
+*real* process footprint instead of the loader's self-report.
 
 | Loader   | via                       | model + VRAM | weights/KV split |
 |----------|---------------------------|:---:|:---:|
@@ -202,14 +205,16 @@ vramwatch is deliberately honest about what it can and can’t know:
   only when every layer is on the GPU; with partial offload it over-reports weights.
 - **AMD per-process VRAM is Linux-only** (via `/proc` DRM `fdinfo`), and only for
   processes you can read — a loader running under a different user (e.g. a system
-  service) won’t be visible, and vramwatch falls back to the loader’s reported
-  VRAM. On Windows/macOS, AMD uses the loader’s reported VRAM.
+  service) won’t be visible, and vramwatch falls back to the loader’s reported VRAM.
+  On **Windows**, vramwatch reports the AMD device total/used/free but not
+  per-process (the Windows per-process GPU counter over-reports shared memory, so
+  it isn’t trustworthy for the split); the footprint uses the loader’s reported VRAM.
 - **Prediction is linear** in the KV cache and holds weights/overhead constant — a
   good planning estimate, not a guarantee.
 
 **Roadmap:** allocator-level attribution, KV-dtype auto-detection, an Intel GPU
-provider (the `fdinfo` reader already handles i915), AMD per-process on
-Windows/macOS, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
+provider (the `fdinfo` reader already handles i915), reliable AMD per-process on
+Windows, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
 
 ## Road to 1.0
 
@@ -218,8 +223,10 @@ tool is young and **hasn't yet been validated across a broad range of real
 hardware** — so the CLI and JSON shapes may still change. A `1.0` is earned, not
 declared; it means:
 
-- [ ] Verified on real NVIDIA **and** AMD hardware across several GPUs/drivers, with
-      the reported split sanity-checked against actual allocations.
+- [~] Verified on real hardware. *Done:* AMD Radeon RX 7900 XT on Windows — device
+      total/used match the registry and the GPU perf counter exactly. *Still needed:*
+      NVIDIA, AMD-on-Linux, several GPUs/drivers, and the weights/KV split
+      sanity-checked against a running loader.
 - [ ] Ollama and llama.cpp confirmed against their current releases, plus at least
       one more loader (vLLM is next).
 - [ ] The `--json` schema and CLI held stable across a few releases with no breaking
