@@ -28,7 +28,7 @@ vramwatch attributes VRAM **inside** the inference process and shows you the spl
 live:
 
 ```text
-vramwatch v1.0.0
+vramwatch v0.2.0
 
 GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
 [███████████████████████████████████████████████]  23.75 GiB / 24.00 GiB used
@@ -168,7 +168,7 @@ Everything in the estimated rows is labelled `estimated` in the output. See the
 | GPU vendor | via         | device totals | per-process | notes |
 |------------|-------------|:---:|:---:|-------|
 | NVIDIA     | `nvidia-smi`| ✅ | ✅ | full support |
-| AMD        | `rocm-smi`  | ✅ | ❌ | per-process not collected in v1.0; footprint comes from the loader |
+| AMD        | `rocm-smi`  | ✅ | ❌ | per-process not collected yet; footprint comes from the loader |
 
 | Loader   | via                       | model + VRAM | weights/KV split |
 |----------|---------------------------|:---:|:---:|
@@ -179,7 +179,7 @@ Everything in the estimated rows is labelled `estimated` in the output. See the
 
 vramwatch is deliberately honest about what it can and can’t know:
 
-- **Weights/KV are estimated, not allocator-hooked.** v1.0 does not intercept the
+- **Weights/KV are estimated, not allocator-hooked.** vramwatch does not intercept the
   CUDA/HIP allocator; it derives the split from the loader’s reported footprint (or
   the GGUF file) plus the model architecture. The KV formula is exact for an
   unquantized cache and a small conservative over-estimate for a quantized one;
@@ -198,6 +198,25 @@ vramwatch is deliberately honest about what it can and can’t know:
 
 **Roadmap:** allocator-level attribution, KV-dtype auto-detection, ROCm per-process
 data, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
+
+## Road to 1.0
+
+vramwatch is `0.x` on purpose. The engine is well-tested against fixtures, but the
+tool is young and **hasn't yet been validated across a broad range of real
+hardware** — so the CLI and JSON shapes may still change. A `1.0` is earned, not
+declared; it means:
+
+- [ ] Verified on real NVIDIA **and** AMD hardware across several GPUs/drivers, with
+      the reported split sanity-checked against actual allocations.
+- [ ] Ollama and llama.cpp confirmed against their current releases, plus at least
+      one more loader (vLLM is next).
+- [ ] The `--json` schema and CLI held stable across a few releases with no breaking
+      changes, and enough real-world use to trust the estimates in the field.
+- [ ] The headline accuracy roadmap item landed (allocator-level or
+      cross-checked attribution, so “estimated” becomes “measured”).
+
+If you run it on your rig, [bug reports and hardware results](https://github.com/RamazanKara/vramwatch/issues)
+are the fastest way to get there.
 
 ## Docs
 

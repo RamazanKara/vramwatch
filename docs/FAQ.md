@@ -53,7 +53,7 @@ were found. Common causes:
 
 ### Does it support vLLM / MLX / TGI / LM Studio?
 
-Not yet — Ollama and llama.cpp are supported in v1.0. vLLM, MLX and Apple Metal are
+Not yet — Ollama and llama.cpp are supported today. vLLM, MLX and Apple Metal are
 on the roadmap. A new loader is a small, self-contained contribution — see
 [CONTRIBUTING.md](../CONTRIBUTING.md).
 

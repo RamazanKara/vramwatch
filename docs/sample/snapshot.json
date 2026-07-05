@@ -1,5 +1,5 @@
 {
-  "vramwatch_version": "v1.0.0",
+  "vramwatch_version": "v0.2.0",
   "breakdowns": [
     {
       "gpu": {

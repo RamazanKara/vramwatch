@@ -6,9 +6,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [1.0.0] - 2026-07-05
+## [0.2.0] - 2026-07-05
 
-Focus: reduce the estimation limitations and document the method in full.
+Focus: reduce the estimation limitations and document the method in full. Still
+0.x — the tool is young and hasn't been validated on a broad range of real
+hardware yet (see “Road to 1.0” in the README).
 
 ### Added
 - **KV cache dtype support** — `--kv-cache-type` (and `$VRAMWATCH_KV_CACHE_TYPE`)
@@ -56,6 +58,6 @@ First public release.
 - `demo` and `mock:PATH` data sources for hardware-free demos, tests, and CI.
 - Single static, dependency-free binary for Linux, macOS, and Windows.
 
-[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/RamazanKara/vramwatch/compare/v0.1.0...v1.0.0
+[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/RamazanKara/vramwatch/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/RamazanKara/vramwatch/releases/tag/v0.1.0
