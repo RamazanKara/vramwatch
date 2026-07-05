@@ -234,6 +234,58 @@ func TestLlamaCppWithGGUF(t *testing.T) {
 	}
 }
 
+func TestIsLocalURL(t *testing.T) {
+	for _, b := range []string{"http://127.0.0.1:8080", "http://localhost:8080", "http://[::1]:8080", "http://127.0.0.53:11434"} {
+		if !isLocalURL(b) {
+			t.Errorf("%s should be local", b)
+		}
+	}
+	for _, b := range []string{"http://192.168.1.50:8080", "http://box.lan:8080", "http://10.0.0.5:8080"} {
+		if isLocalURL(b) {
+			t.Errorf("%s should be treated as remote", b)
+		}
+	}
+}
+
+// A GGUF that lacks general.architecture must still yield the weight size.
+func TestLlamaCppGGUFNoArch(t *testing.T) {
+	var b bytes.Buffer
+	wu32 := func(v uint32) { binary.Write(&b, binary.LittleEndian, v) }
+	wu64 := func(v uint64) { binary.Write(&b, binary.LittleEndian, v) }
+	wstr := func(s string) { wu64(uint64(len(s))); b.WriteString(s) }
+	b.WriteString("GGUF")
+	wu32(3)
+	wu64(0)
+	wu64(1)
+	wstr("general.name") // a string KV, but no general.architecture
+	wu32(8)
+	wstr("mystery model")
+	path := filepath.Join(t.TempDir(), "noarch.gguf")
+	if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("/props", func(w http.ResponseWriter, r *http.Request) {
+		mp, _ := json.Marshal(path)
+		w.Write([]byte(`{"default_generation_settings":{"n_ctx":2048},"model_path":` + string(mp) + `}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ms, err := NewLlamaCpp(srv.URL).Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms[0].WeightsBytes == 0 {
+		t.Error("weight size should be set from the GGUF file even without an architecture")
+	}
+	if ms[0].Arch.KnownForKV() {
+		t.Error("arch should be unknown for a GGUF without general.architecture")
+	}
+}
+
 func TestParseLlamaProps(t *testing.T) {
 	var props propsResponse
 	props.ModelPath = "/models/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"

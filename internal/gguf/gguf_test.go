@@ -113,6 +113,63 @@ func TestReadGGUFHeadCountKVFallback(t *testing.T) {
 	}
 }
 
+// validGGUFBytes returns the bytes of a small valid GGUF, for fuzz seeding.
+func validGGUFBytes() []byte {
+	var body bytes.Buffer
+	kvStr(&body, "general.architecture", "llama")
+	kvU32(&body, "llama.block_count", 32)
+	kvU32(&body, "llama.attention.head_count", 32)
+	var hdr bytes.Buffer
+	hdr.WriteString("GGUF")
+	wU32(&hdr, 3)
+	wU64(&hdr, 0)
+	wU64(&hdr, 3)
+	hdr.Write(body.Bytes())
+	return hdr.Bytes()
+}
+
+// FuzzReadGGUF asserts Read never panics on arbitrary (truncated/hostile) input.
+func FuzzReadGGUF(f *testing.F) {
+	f.Add(validGGUFBytes())
+	f.Add([]byte("GGUF"))
+	f.Add([]byte("GGUF\x03\x00\x00\x00"))
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		p := filepath.Join(t.TempDir(), "f.gguf")
+		if err := os.WriteFile(p, data, 0o644); err != nil {
+			t.Skip()
+		}
+		_, _ = Read(p) // must return, never panic
+	})
+}
+
+func TestReadGGUFRejectsDeepNesting(t *testing.T) {
+	var body bytes.Buffer
+	wStr(&body, "a")
+	wU32(&body, 9) // KV value type: array
+	for i := 0; i < 40; i++ {
+		wU32(&body, 9) // elem type: array (each block descends one level)
+		wU64(&body, 1) // count: 1
+	}
+	wU32(&body, 4) // terminal: empty uint32 array (never reached)
+	wU64(&body, 0)
+
+	var hdr bytes.Buffer
+	hdr.WriteString("GGUF")
+	wU32(&hdr, 3)
+	wU64(&hdr, 0)
+	wU64(&hdr, 1)
+	hdr.Write(body.Bytes())
+
+	path := filepath.Join(t.TempDir(), "deep.gguf")
+	if err := os.WriteFile(path, hdr.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Read(path); err == nil {
+		t.Error("expected an error for deeply nested arrays (stack-overflow guard)")
+	}
+}
+
 func TestReadGGUFRejectsNonGGUF(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "notgguf.bin")
 	os.WriteFile(path, []byte("NOPExxxxxxxx"), 0o644)

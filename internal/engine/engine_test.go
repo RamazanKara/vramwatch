@@ -28,7 +28,7 @@ func TestKVBytesPerToken(t *testing.T) {
 	}
 }
 
-// A 24 GiB card running llama3:70b-q4 at 8k context, nearly full.
+// A 24 GiB card running llama3:70b-q2_K at 8k context, nearly full.
 func scenario70B() (model.GPU, []model.LoaderModel) {
 	gpu := model.GPU{
 		Index: 0, Name: "AMD Radeon RX 7900 XTX", Vendor: model.VendorAMD, Driver: "6.10.5",
@@ -39,7 +39,7 @@ func scenario70B() (model.GPU, []model.LoaderModel) {
 	}
 	// 70B q4: ~19 GiB weights reported by loader; arch drives KV estimate.
 	m := model.LoaderModel{
-		Loader: "ollama", Name: "llama3:70b-q4", PID: 4242, GPUIndex: 0,
+		Loader: "ollama", Name: "llama3:70b-q2_K", PID: 4242, GPUIndex: 0,
 		VRAMBytes:     22 * model.GiB,
 		ContextTokens: 8192, ContextMax: 8192,
 		Arch: model.Arch{Name: "llama", Layers: 80, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
@@ -222,20 +222,36 @@ func TestPredictPrefersKnownArch(t *testing.T) {
 	}
 }
 
-// A user-declared quantized KV cache (q8_0 = 8 bits) must halve the KV estimate.
+// A user-declared quantized KV cache scales the estimate by its bit width.
 func TestKVBitsOverride(t *testing.T) {
-	gpu, models := scenario70B()
+	gpu, models := scenario70B() // arch is f16 (16 bits)
 	f16 := Build([]model.GPU{gpu}, models, Options{Version: "t"})
 	q8 := Build([]model.GPU{gpu}, models, Options{Version: "t", KVBits: 8})
 
 	kvF16, _ := f16.Breakdowns[0].Segment(model.KindKVCache)
 	kvQ8, _ := q8.Breakdowns[0].Segment(model.KindKVCache)
-	if kvQ8.Bytes*2 != kvF16.Bytes {
-		t.Errorf("q8 KV (%s) should be half of f16 KV (%s)", model.HumanBytes(kvQ8.Bytes), model.HumanBytes(kvF16.Bytes))
+	if kvQ8.Bytes*16 != kvF16.Bytes*8 {
+		t.Errorf("KV at 8 bits (%s) should be 8/16 of f16 KV (%s)", model.HumanBytes(kvQ8.Bytes), model.HumanBytes(kvF16.Bytes))
 	}
 	// The override must also flow into the prediction's per-token figure.
-	if q8.Breakdowns[0].Prediction.KVBytesPerToken*2 != f16.Breakdowns[0].Prediction.KVBytesPerToken {
-		t.Error("prediction kv/token should halve under q8")
+	if q8.Breakdowns[0].Prediction.KVBytesPerToken*16 != f16.Breakdowns[0].Prediction.KVBytesPerToken*8 {
+		t.Error("prediction kv/token should scale with the bit override")
+	}
+}
+
+// A loader-reported (measured) KV cache must NOT be second-guessed by the flag.
+func TestKVBitsOverrideKeepsReportedKV(t *testing.T) {
+	gpu := model.GPU{Index: 0, Vendor: model.VendorNVIDIA, TotalBytes: 16 * model.GiB, UsedBytes: 10 * model.GiB, FreeBytes: 6 * model.GiB}
+	m := model.LoaderModel{
+		Loader: "x", Name: "reported-kv", GPUIndex: 0, VRAMBytes: 10 * model.GiB,
+		KVCacheBytes:  3 * model.GiB, // measured, not estimated
+		ContextTokens: 0,             // no per-token context reported
+		Arch:          model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
+	}
+	snap := Build([]model.GPU{gpu}, []model.LoaderModel{m}, Options{Version: "t", KVBits: 8})
+	kv, _ := snap.Breakdowns[0].Segment(model.KindKVCache)
+	if kv.Bytes != 3*model.GiB {
+		t.Errorf("reported KV should stay 3 GiB under the override, got %s", model.HumanBytes(kv.Bytes))
 	}
 }
 

@@ -365,17 +365,17 @@ func Build(gpus []model.GPU, models []model.LoaderModel, opts Options) model.Sna
 	return snap
 }
 
-// withKVBits returns a copy of models with every model's KV element size set to
-// bits, so a user-declared quantized KV cache is estimated with the right dtype.
+// withKVBits returns a copy of models with the KV element size set to bits for
+// every model whose KV cache is *estimated* (KVCacheBytes == 0), so a
+// user-declared quantized cache is estimated with the right dtype. A loader that
+// reported an exact KVCacheBytes is left untouched — a measured value is never
+// second-guessed by the flag.
 func withKVBits(models []model.LoaderModel, bits int) []model.LoaderModel {
 	out := make([]model.LoaderModel, len(models))
 	copy(out, models)
 	for i := range out {
-		if out[i].Arch.KnownForKV() {
+		if out[i].KVCacheBytes == 0 && out[i].Arch.KnownForKV() {
 			out[i].Arch.KVTypeBits = bits
-			// The reported/estimated KV must be recomputed under the new dtype,
-			// so drop any precomputed value and let the engine derive it.
-			out[i].KVCacheBytes = 0
 		}
 	}
 	return out

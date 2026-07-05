@@ -36,7 +36,7 @@ GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
   █ KV cache      2.50 GiB   10.4%  (ollama, estimated)
   █ other apps    1.75 GiB    7.3%
   █ free         256.0 MiB    1.0%
-  model: llama3:70b-q4  ctx 8192/8192
+  model: llama3:70b-q2_K  ctx 8192/8192
   ⚠ OOM risk: headroom 256.0 MiB • ~320.0 KiB/token • max context ≈ 8,192 tokens
 ```
 
@@ -48,7 +48,7 @@ GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
 - **OOM prediction.** It knows your model’s KV-cache growth per token, so it tells
   you the **max context that fits** and answers *“will 32k fit?”* before you try it.
 - **Quantized-KV aware.** Running a `q8_0`/`q4_0` KV cache? Pass `--kv-cache-type`
-  and the estimate is right, not 2–4× too high.
+  and the estimate tracks it (conservatively) instead of being 2–4× too high.
 - **AMD/ROCm is a peer, not an afterthought.** Most VRAM tooling is CUDA-only.
 - **Zero friction, zero deps.** One static binary. No Python, no CUDA toolkit, no
   account, nothing uploaded. `curl | sh` and go.
@@ -118,7 +118,7 @@ vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json
 ```text
 $ vramwatch predict --context 32768
 GPU 0  AMD Radeon RX 7900 XTX
-  model: llama3:70b-q4   ~320.0 KiB/token
+  model: llama3:70b-q2_K   ~320.0 KiB/token
   headroom: 256.0 MiB
   max context that fits: ~8,192 tokens   (OOM risk now)
   target 32,768 tokens: WON'T FIT (needs 29.50 GiB, card has 24.00 GiB)
@@ -155,7 +155,7 @@ estimated — is in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).**
 |--------|-------------------|-------|
 | Device total / used / free | Driver (`nvidia-smi`/`rocm-smi`) | measured |
 | Per-process VRAM (NVIDIA) | Driver compute-apps query | measured |
-| KV cache | `arch × context × dtype` (formula) | **estimated** — exact once `--kv-cache-type` matches your cache |
+| KV cache | `arch × context × dtype` (formula) | **estimated** — exact at f16/bf16/f32; conservative (rounded up) for a quantized cache |
 | Weights (Ollama) | `process VRAM − KV` | **estimated** |
 | Weights (llama.cpp) | GGUF file size | **estimated** (assumes full GPU offload) |
 | Max context before OOM | `free ÷ KV-bytes-per-token` | **estimated**, linear |
@@ -181,11 +181,13 @@ vramwatch is deliberately honest about what it can and can’t know:
 
 - **Weights/KV are estimated, not allocator-hooked.** v1.0 does not intercept the
   CUDA/HIP allocator; it derives the split from the loader’s reported footprint (or
-  the GGUF file) plus the model architecture. The KV formula is exact for a given
-  dtype; weights are the remainder (Ollama) or the file size (llama.cpp).
+  the GGUF file) plus the model architecture. The KV formula is exact for an
+  unquantized cache and a small conservative over-estimate for a quantized one;
+  weights are the remainder (Ollama) or the file size (llama.cpp).
 - **KV dtype defaults to f16.** vramwatch can’t read the loader’s cache-type setting,
   so pass `--kv-cache-type q8_0` (or set `VRAMWATCH_KV_CACHE_TYPE`) if you quantized
-  it. With the right dtype the KV figure is exact.
+  it. Quantized widths are rounded up for the per-block scale, so the figure is a
+  small conservative over-estimate rather than 2–4× too low.
 - **llama.cpp weights assume full GPU offload.** The GGUF file size ≈ VRAM weights
   only when every layer is on the GPU; with partial offload it over-reports weights.
 - **AMD per-process VRAM is not collected.** On AMD the inference footprint comes

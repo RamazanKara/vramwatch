@@ -40,7 +40,13 @@ a tested pure function.
 
 Implement `loader.Provider` (`Name`, `Available`, `Models`) and register it in
 `loader.All()`. If you can extract architecture (layers, KV heads, head dim),
-fill `model.Arch` so the engine can compute the weights/KV split.
+fill `model.Arch` so the engine can compute the weights/KV split. When your
+loader exposes a GGUF file path, `internal/gguf.Read` gives you the architecture
+and weight size for free — see the llama.cpp provider for the pattern.
+
+Set `WeightsBytes`/`VRAMBytes` to whatever the loader measures; leave
+`KVCacheBytes` at zero to let the engine estimate it from the architecture (which
+also lets `--kv-cache-type` apply). Mark derived figures with `Estimated: true`.
 
 ## Commit / PR
 

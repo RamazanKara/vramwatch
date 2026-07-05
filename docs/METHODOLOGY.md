@@ -3,8 +3,10 @@
 This document explains exactly how vramwatch turns two data sources — the GPU
 driver and the inference loader — into the weights/KV/other breakdown, what is
 measured versus estimated, and where the numbers can be wrong. If you only read
-one thing: **the KV-cache formula is exact for a given dtype; everything else in
-the split is a best-effort estimate, and the output labels it as such.**
+one thing: **the KV-cache formula is exact for an unquantized cache (f16/bf16/f32)
+and a small, deliberately-conservative over-estimate for a quantized one;
+everything else in the split is a best-effort estimate, and the output labels it
+as such.**
 
 ## The two inputs
 
@@ -38,8 +40,12 @@ KV bytes/token = 2 · n_layers · n_kv_heads · head_dim · (kv_bits / 8)
   multi-head attention (MHA), `n_kv_heads == n_heads`.
 - `head_dim` — per-head dimension (`key_length` if the model reports it, else
   `embedding_length / n_heads`).
-- `kv_bits` — bits per cache element: 16 for f16/bf16 (the default), 8 for `q8_0`,
-  ~4 for `q4_0`. Set with `--kv-cache-type`.
+- `kv_bits` — bits per cache element: 16 for f16/bf16 (the default), 32 for f32.
+  Block-quantized caches also store a per-block f16 scale (and an f16 min for the
+  `_1` variants) over 32 elements, so their true cost is higher than the nominal
+  width: `q8_0` ≈ 8.5, `q5_0` ≈ 5.5, `q5_1` = 6, `q4_0` ≈ 4.5, `q4_1` = 5 bits.
+  `--kv-cache-type` rounds these **up** (q8_0→9, q5→6, q4→5) so the estimate is
+  conservative — an OOM predictor should never under-count.
 
 ### Worked example — Llama-3-8B at 8k context, f16 cache
 
@@ -50,8 +56,9 @@ KV/token = 2 · 32 · 8 · 128 · (16/8) = 131,072 bytes = 128 KiB
 KV @ 8192 = 128 KiB · 8192 = 1.00 GiB
 ```
 
-Quantise the cache to `q8_0` (`--kv-cache-type q8_0`) and it halves to 512 MiB;
-`q4_0` quarters it to 256 MiB. This is why declaring the dtype matters.
+Declare a `q8_0` cache (`--kv-cache-type q8_0`, modelled at 9 bits) and the estimate
+drops to ~576 MiB; `q4_0` (5 bits) to ~320 MiB — versus 1 GiB at f16. That’s the
+difference between “fits” and “OOM”, which is why declaring the dtype matters.
 
 ## Attribution: tiling the device
 
@@ -113,7 +120,7 @@ VRAM.
 |--------|--------|-------|
 | Device total / used / free | driver | measured |
 | Per-process VRAM (NVIDIA) | driver | measured |
-| KV cache | formula (`arch × ctx × dtype`) | estimated — exact once dtype matches |
+| KV cache | formula (`arch × ctx × dtype`) | estimated — exact at f16/bf16/f32, conservative (rounded up) for quantized |
 | Weights (Ollama) | `footprint − KV` | estimated |
 | Weights (llama.cpp) | GGUF file size | estimated (assumes full offload) |
 | Compute overhead | footprint remainder | estimated |

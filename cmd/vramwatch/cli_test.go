@@ -38,7 +38,7 @@ func TestCmdSnapshotConsole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"weights", "KV cache", "OOM risk", "llama3:70b-q4"} {
+	for _, want := range []string{"weights", "KV cache", "OOM risk", "llama3:70b-q2_K"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("snapshot output missing %q:\n%s", want, out)
 		}
@@ -151,7 +151,8 @@ func TestCmdSnapshotBadSource(t *testing.T) {
 
 func TestResolveKVBits(t *testing.T) {
 	t.Setenv("VRAMWATCH_KV_CACHE_TYPE", "") // isolate from the ambient env
-	cases := map[string]int{"": 0, "f16": 16, "BF16": 16, "q8_0": 8, "q4_0": 4, "f32": 32, "q5_0": 5}
+	// Quantized widths are rounded up for the GGML per-block scale overhead.
+	cases := map[string]int{"": 0, "f16": 16, "BF16": 16, "f32": 32, "q8_0": 9, "q5_0": 6, "q4_0": 5, "q4_1": 5}
 	for in, want := range cases {
 		got, err := resolveKVBits(in)
 		if err != nil || got != want {
@@ -195,14 +196,18 @@ func kvSegmentBytes(t *testing.T, extra ...string) uint64 {
 
 func TestCmdKVCacheType(t *testing.T) {
 	t.Setenv("VRAMWATCH_KV_CACHE_TYPE", "")
-	f16 := kvSegmentBytes(t)
-	q8 := kvSegmentBytes(t, "--kv-cache-type", "q8_0")
-	q4 := kvSegmentBytes(t, "--kv-cache-type", "q4_0")
-	if q8*2 != f16 {
-		t.Errorf("q8_0 KV (%d) should be half of f16 (%d)", q8, f16)
+	f16 := kvSegmentBytes(t)                           // 16 bits
+	q8 := kvSegmentBytes(t, "--kv-cache-type", "q8_0") // 9 bits (8.5 rounded up)
+	q4 := kvSegmentBytes(t, "--kv-cache-type", "q4_0") // 5 bits (4.5 rounded up)
+	// KV scales linearly with the bit width.
+	if q8*16 != f16*9 {
+		t.Errorf("q8_0 KV (%d) should be 9/16 of f16 (%d)", q8, f16)
 	}
-	if q4*4 != f16 {
-		t.Errorf("q4_0 KV (%d) should be a quarter of f16 (%d)", q4, f16)
+	if q4*16 != f16*5 {
+		t.Errorf("q4_0 KV (%d) should be 5/16 of f16 (%d)", q4, f16)
+	}
+	if !(q4 < q8 && q8 < f16) {
+		t.Errorf("expected q4 < q8 < f16, got %d %d %d", q4, q8, f16)
 	}
 }
 

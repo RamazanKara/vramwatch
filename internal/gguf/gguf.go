@@ -20,6 +20,7 @@ const (
 	maxKVCount    = 1 << 20 // metadata key/value pairs
 	maxStringLen  = 1 << 26 // 64 MiB per string
 	maxArrayCount = 1 << 30
+	maxArrayDepth = 16 // real GGUF metadata is never deeply nested
 )
 
 // Info is the subset of GGUF metadata vramwatch consumes, plus the file size.
@@ -145,9 +146,9 @@ func readTopValue(r *bufio.Reader, key string, vtype uint32, strs map[string]str
 		nums[key] = n
 		return nil
 	case 9: // array
-		return skipArray(r)
+		return skipArray(r, 1)
 	default: // float32/float64/bool: fixed-size, just skip
-		return skipValue(r, vtype)
+		return skipValue(r, vtype, 0)
 	}
 }
 
@@ -182,8 +183,9 @@ func readInt(r *bufio.Reader, vtype uint32) (int64, error) {
 	return 0, fmt.Errorf("gguf: not an integer type %d", vtype)
 }
 
-// skipValue consumes one value of a scalar (non-array, non-integer-stored) type.
-func skipValue(r *bufio.Reader, vtype uint32) error {
+// skipValue consumes one value of the given type. depth is the array-nesting
+// level, bounded to stop a hostile file from overflowing the stack.
+func skipValue(r *bufio.Reader, vtype uint32, depth int) error {
 	switch vtype {
 	case 7: // bool
 		_, err := r.Discard(1)
@@ -198,7 +200,7 @@ func skipValue(r *bufio.Reader, vtype uint32) error {
 		_, err := readString(r)
 		return err
 	case 9: // array
-		return skipArray(r)
+		return skipArray(r, depth+1)
 	case 0, 1, 2, 3, 4, 5, 10, 11:
 		_, err := readInt(r, vtype)
 		return err
@@ -206,7 +208,10 @@ func skipValue(r *bufio.Reader, vtype uint32) error {
 	return fmt.Errorf("gguf: unknown value type %d", vtype)
 }
 
-func skipArray(r *bufio.Reader) error {
+func skipArray(r *bufio.Reader, depth int) error {
+	if depth > maxArrayDepth {
+		return fmt.Errorf("gguf: array nesting too deep")
+	}
 	elemType, err := readU32(r)
 	if err != nil {
 		return err
@@ -219,7 +224,7 @@ func skipArray(r *bufio.Reader) error {
 		return fmt.Errorf("gguf: implausible array length %d", n)
 	}
 	for i := uint64(0); i < n; i++ {
-		if err := skipValue(r, elemType); err != nil {
+		if err := skipValue(r, elemType, depth); err != nil {
 			return err
 		}
 	}

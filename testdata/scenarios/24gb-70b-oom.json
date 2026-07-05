@@ -16,7 +16,7 @@
   "models": [
     {
       "loader": "ollama",
-      "name": "llama3:70b-q4",
+      "name": "llama3:70b-q2_K",
       "pid": 4242,
       "gpu_index": 0,
       "vram_bytes": 23622320128,

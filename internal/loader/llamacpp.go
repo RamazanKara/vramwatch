@@ -2,6 +2,7 @@ package loader
 
 import (
 	"context"
+	"net/url"
 	"strings"
 
 	"github.com/RamazanKara/vramwatch/internal/gguf"
@@ -40,21 +41,36 @@ func (l *LlamaCpp) Models(ctx context.Context) ([]model.LoaderModel, error) {
 		return nil, err
 	}
 	models := parseLlamaProps(props)
-	// Enrich with GGUF metadata when the model file is readable on this host.
-	// This is what gives llama.cpp a real weights/KV split — /props alone
-	// exposes neither VRAM nor architecture.
-	if props.ModelPath != "" {
-		if info, err := gguf.Read(props.ModelPath); err == nil && info.Architecture != "" {
+	// Enrich with GGUF metadata — this is what gives llama.cpp a real weights/KV
+	// split, since /props exposes neither VRAM nor architecture. Only attempt the
+	// read when the server is on THIS host: props.ModelPath is a path as seen by
+	// the server, so reading it locally for a remote server could open a
+	// different (wrong) file entirely.
+	if props.ModelPath != "" && isLocalURL(l.Base) {
+		if info, err := gguf.Read(props.ModelPath); err == nil {
 			for i := range models {
-				models[i].Arch = info.ToArch()
 				models[i].WeightsBytes = info.FileSize // ≈ weights (assumes full GPU offload)
 				if info.ContextLength > 0 {
 					models[i].ContextMax = info.ContextLength
+				}
+				if info.Architecture != "" {
+					models[i].Arch = info.ToArch()
 				}
 			}
 		}
 	}
 	return models, nil
+}
+
+// isLocalURL reports whether base points at the loopback host, so it's safe to
+// read a server-supplied file path from the local filesystem.
+func isLocalURL(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "::1" || strings.HasPrefix(host, "127.")
 }
 
 func parseLlamaProps(props propsResponse) []model.LoaderModel {

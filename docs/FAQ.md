@@ -75,6 +75,7 @@ dashboards. `snapshot --svg` writes a shareable scorecard.
 
 ### How accurate is the OOM prediction?
 
-The KV growth is exact for a given dtype, so the *max context* estimate is good when
+The KV growth is exact for an f16/bf16/f32 cache (and a small conservative
+over-estimate for a quantized one), so the *max context* estimate is good when
 weights and overhead stay constant. It’s a planning number, not a guarantee — a
 fragmenting allocator or a second process can still OOM you earlier.

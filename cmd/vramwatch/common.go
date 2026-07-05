@@ -92,8 +92,13 @@ func addKVFlag(fs *flag.FlagSet) *string {
 		"KV cache dtype for an accurate estimate: f16|bf16|f32|q8_0|q5_0|q4_0 (or $VRAMWATCH_KV_CACHE_TYPE)")
 }
 
-// resolveKVBits maps a --kv-cache-type value (falling back to the env var) to a
-// bit width; 0 means "leave each model's own dtype".
+// resolveKVBits maps a --kv-cache-type value (falling back to the env var) to an
+// effective bit width per cache element; 0 means "leave each model's own dtype".
+//
+// Block-quantized GGML formats store a per-block f16 scale (and an f16 min for
+// the _1 variants) over 32 elements, so the true cost is q8_0=8.5, q5_0=5.5,
+// q5_1=6.0, q4_0=4.5, q4_1=5.0 bits/element. We round UP so the KV estimate is
+// conservative — an OOM predictor should never claim more headroom than exists.
 func resolveKVBits(flagVal string) (int, error) {
 	if flagVal == "" {
 		flagVal = os.Getenv("VRAMWATCH_KV_CACHE_TYPE")
@@ -105,12 +110,12 @@ func resolveKVBits(flagVal string) (int, error) {
 		return 32, nil
 	case "f16", "fp16", "float16", "bf16", "bfloat16":
 		return 16, nil
-	case "q8_0", "q8":
-		return 8, nil
-	case "q5_0", "q5_1", "q5":
+	case "q8_0", "q8": // 8.5 -> 9
+		return 9, nil
+	case "q5_0", "q5_1", "q5": // 5.5 / 6.0 -> 6
+		return 6, nil
+	case "q4_0", "q4_1", "q4", "iq4_nl": // 4.5 / 5.0 -> 5
 		return 5, nil
-	case "q4_0", "q4_1", "q4", "iq4_nl":
-		return 4, nil
 	default:
 		return 0, fmt.Errorf("unknown --kv-cache-type %q (try f16, q8_0, q5_0, q4_0, f32)", flagVal)
 	}

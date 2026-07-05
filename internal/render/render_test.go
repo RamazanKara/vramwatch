@@ -21,8 +21,8 @@ func sampleSnap() model.Snapshot {
 				{Kind: model.KindOtherProcess, Label: "other apps", Bytes: 1*model.GiB + 768*model.MiB},
 				{Kind: model.KindFree, Label: "free", Bytes: 256 * model.MiB},
 			},
-			Models:     []model.LoaderModel{{Loader: "ollama", Name: "llama3:70b-q4", ContextTokens: 8192, ContextMax: 8192}},
-			Prediction: &model.Prediction{Model: "llama3:70b-q4", KVBytesPerToken: 327680, MaxContextFits: 8192, HeadroomBytes: 256 * model.MiB, OOMRisk: true},
+			Models:     []model.LoaderModel{{Loader: "ollama", Name: "llama3:70b-q2_K", ContextTokens: 8192, ContextMax: 8192}},
+			Prediction: &model.Prediction{Model: "llama3:70b-q2_K", KVBytesPerToken: 327680, MaxContextFits: 8192, HeadroomBytes: 256 * model.MiB, OOMRisk: true},
 		}},
 	}
 }
@@ -67,7 +67,7 @@ func TestAllocateCellsSumsExactly(t *testing.T) {
 
 func TestTableContainsKeyFacts(t *testing.T) {
 	out := Table(sampleSnap(), Options{Color: false})
-	for _, want := range []string{"vramwatch", "RX 7900 XTX", "weights", "KV cache", "OOM risk", "llama3:70b-q4", "8,192"} {
+	for _, want := range []string{"vramwatch", "RX 7900 XTX", "weights", "KV cache", "OOM risk", "llama3:70b-q2_K", "8,192"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("table missing %q\n%s", want, out)
 		}
