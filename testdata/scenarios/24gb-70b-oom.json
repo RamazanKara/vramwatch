@@ -1,0 +1,29 @@
+{
+  "gpus": [
+    {
+      "index": 0,
+      "name": "AMD Radeon RX 7900 XTX",
+      "vendor": "amd",
+      "driver": "6.7.0",
+      "total_bytes": 25769803776,
+      "used_bytes": 25501368320,
+      "free_bytes": 268435456,
+      "processes": [
+        { "pid": 4242, "name": "ollama", "used_bytes": 23622320128 }
+      ]
+    }
+  ],
+  "models": [
+    {
+      "loader": "ollama",
+      "name": "llama3:70b-q4",
+      "pid": 4242,
+      "gpu_index": 0,
+      "vram_bytes": 23622320128,
+      "context_tokens": 8192,
+      "context_max": 8192,
+      "arch": { "name": "llama", "layers": 80, "kv_heads": 8, "head_dim": 128, "kv_type_bits": 16 },
+      "estimated": true
+    }
+  ]
+}

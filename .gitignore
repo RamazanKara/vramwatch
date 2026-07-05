@@ -1,0 +1,16 @@
+# Binaries
+/vramwatch
+/vramwatch.exe
+/dist/
+*.exe
+*.test
+
+# Coverage / profiling
+*.out
+coverage.*
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

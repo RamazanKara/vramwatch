@@ -1,0 +1,61 @@
+name: ci
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { echo "these files need gofmt:"; gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test ./... -race
+      - run: go build -o vramwatch ./cmd/vramwatch
+
+      - name: OOM scenario is flagged
+        run: |
+          ./vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --json > out.json
+          grep -q '"oom_risk": true' out.json
+
+      - name: healthy scenario is not flagged
+        run: |
+          ./vramwatch predict --source mock:testdata/scenarios/16gb-13b-fits.json --json > fit.json
+          grep -q '"oom_risk": false' fit.json
+
+      - name: predict rejects an oversized context
+        run: |
+          ./vramwatch predict --source mock:testdata/scenarios/24gb-70b-oom.json --context 32768 --json > pred.json
+          grep -q '"fits": false' pred.json
+
+      - name: committed sample scorecard is up to date
+        run: |
+          ./vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --static --svg /tmp/card.svg
+          diff -q /tmp/card.svg docs/sample/vramwatch-card.svg
+
+  crosscompile:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: go build ./cmd/vramwatch

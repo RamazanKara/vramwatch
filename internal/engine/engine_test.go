@@ -1,0 +1,151 @@
+package engine
+
+import (
+	"testing"
+	"time"
+
+	"github.com/RamazanKara/vramwatch/internal/model"
+)
+
+func TestKVBytesPerToken(t *testing.T) {
+	// Llama-3-8B: 32 layers, 8 KV heads (GQA), head_dim 128, f16 cache.
+	// Known value: 128 KiB/token, i.e. 1 GiB at 8192 ctx.
+	a := model.Arch{Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16}
+	if got := KVBytesPerToken(a); got != 131072 {
+		t.Fatalf("KVBytesPerToken = %d, want 131072", got)
+	}
+	if got := KVCacheBytes(a, 8192); got != 1*model.GiB {
+		t.Fatalf("KVCacheBytes(8192) = %d, want %d", got, uint64(model.GiB))
+	}
+	// q8_0 cache halves the per-token cost.
+	q8 := model.Arch{Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 8}
+	if got := KVBytesPerToken(q8); got != 65536 {
+		t.Fatalf("q8 KVBytesPerToken = %d, want 65536", got)
+	}
+	// Unknown arch => 0.
+	if got := KVBytesPerToken(model.Arch{Layers: 32}); got != 0 {
+		t.Fatalf("unknown arch KVBytesPerToken = %d, want 0", got)
+	}
+}
+
+// A 24 GiB card running llama3:70b-q4 at 8k context, nearly full.
+func scenario70B() (model.GPU, []model.LoaderModel) {
+	gpu := model.GPU{
+		Index: 0, Name: "AMD Radeon RX 7900 XTX", Vendor: model.VendorAMD, Driver: "6.10.5",
+		TotalBytes: 24 * model.GiB,
+		UsedBytes:  24*model.GiB - 256*model.MiB,
+		FreeBytes:  256 * model.MiB,
+		Procs:      []model.Proc{{PID: 4242, Name: "ollama", UsedBytes: 22 * model.GiB}},
+	}
+	// 70B q4: ~19 GiB weights reported by loader; arch drives KV estimate.
+	m := model.LoaderModel{
+		Loader: "ollama", Name: "llama3:70b-q4", PID: 4242, GPUIndex: 0,
+		VRAMBytes:     22 * model.GiB,
+		ContextTokens: 8192, ContextMax: 8192,
+		Arch: model.Arch{Name: "llama", Layers: 80, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
+	}
+	return gpu, []model.LoaderModel{m}
+}
+
+func TestAttributeGPUTilesExactly(t *testing.T) {
+	gpu, models := scenario70B()
+	segs, _ := AttributeGPU(gpu, models)
+
+	var sum uint64
+	kinds := map[model.SegmentKind]uint64{}
+	for _, s := range segs {
+		sum += s.Bytes
+		kinds[s.Kind] = s.Bytes
+	}
+	if sum != gpu.TotalBytes {
+		t.Fatalf("segments sum to %d, want total %d", sum, gpu.TotalBytes)
+	}
+	// KV at 8192 for 80-layer GQA f16 = 2*80*8*128*16/8 * 8192 = 2.5 GiB.
+	wantKV := KVCacheBytes(models[0].Arch, 8192)
+	if kinds[model.KindKVCache] != wantKV {
+		t.Fatalf("kv segment = %d, want %d", kinds[model.KindKVCache], wantKV)
+	}
+	// Weights = process footprint (22 GiB) - KV.
+	if kinds[model.KindWeights] != 22*model.GiB-wantKV {
+		t.Fatalf("weights = %d, want %d", kinds[model.KindWeights], uint64(22*model.GiB)-wantKV)
+	}
+	// Other apps = device used (24 GiB - 256 MiB) - inference proc (22 GiB).
+	if kinds[model.KindOtherProcess] != 2*model.GiB-256*model.MiB {
+		t.Fatalf("other = %d, want %d", kinds[model.KindOtherProcess], uint64(2*model.GiB-256*model.MiB))
+	}
+	if kinds[model.KindFree] != 256*model.MiB {
+		t.Fatalf("free = %d, want %d", kinds[model.KindFree], uint64(256*model.MiB))
+	}
+}
+
+func TestAttributeGPUNoLoader(t *testing.T) {
+	gpu := model.GPU{Index: 0, Vendor: model.VendorNVIDIA, TotalBytes: 8 * model.GiB, UsedBytes: 3 * model.GiB, FreeBytes: 5 * model.GiB}
+	segs, _ := AttributeGPU(gpu, nil)
+	var sum, other, free uint64
+	for _, s := range segs {
+		sum += s.Bytes
+		switch s.Kind {
+		case model.KindOtherProcess:
+			other = s.Bytes
+		case model.KindFree:
+			free = s.Bytes
+		}
+	}
+	if sum != 8*model.GiB || other != 3*model.GiB || free != 5*model.GiB {
+		t.Fatalf("no-loader attribution wrong: sum=%d other=%d free=%d", sum, other, free)
+	}
+}
+
+func TestPredict(t *testing.T) {
+	gpu, models := scenario70B()
+	p := Predict(gpu, models, DefaultOOMThreshold)
+	if p == nil {
+		t.Fatal("expected a prediction")
+	}
+	if !p.OOMRisk {
+		t.Errorf("expected OOM risk with 512 MiB free")
+	}
+	if p.KVBytesPerToken != KVBytesPerToken(models[0].Arch) {
+		t.Errorf("kv/token = %d", p.KVBytesPerToken)
+	}
+	// 512 MiB free / (2.5GiB/8192 per tok) ~ a few hundred extra tokens, capped
+	// at the trained 8192 context.
+	if p.MaxContextFits != 8192 {
+		t.Errorf("MaxContextFits = %d, want capped at 8192", p.MaxContextFits)
+	}
+}
+
+func TestWillContextFit(t *testing.T) {
+	gpu, models := scenario70B()
+	// Currently at 8k and nearly full: 32k must not fit.
+	fit, ok := WillContextFit(gpu, models, 32768)
+	if !ok {
+		t.Fatal("expected fit computation")
+	}
+	if fit.Fits {
+		t.Errorf("32k context should not fit on a nearly-full 24 GiB card")
+	}
+	if fit.KVAtTarget != KVCacheBytes(models[0].Arch, 32768) {
+		t.Errorf("KVAtTarget wrong: %d", fit.KVAtTarget)
+	}
+	// The scenario model is trained to 8192, so 32768 exceeds it.
+	if !fit.ExceedsTrained || fit.ModelContextMax != 8192 {
+		t.Errorf("expected ExceedsTrained with trained max 8192, got %+v", fit)
+	}
+}
+
+func TestBuildDeterministic(t *testing.T) {
+	gpu, models := scenario70B()
+	now := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	snap := Build([]model.GPU{gpu}, models, Options{Version: "test", Host: "bench", Now: now})
+	if len(snap.Breakdowns) != 1 {
+		t.Fatalf("want 1 breakdown, got %d", len(snap.Breakdowns))
+	}
+	b := snap.Breakdowns[0]
+	if b.Prediction == nil {
+		t.Fatal("expected a prediction on the breakdown")
+	}
+	if !snap.Timestamp.Equal(now) {
+		t.Errorf("timestamp not injected")
+	}
+}

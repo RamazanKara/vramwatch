@@ -1,0 +1,29 @@
+{
+  "gpus": [
+    {
+      "index": 0,
+      "name": "NVIDIA GeForce RTX 4080",
+      "vendor": "nvidia",
+      "driver": "550.90.07",
+      "total_bytes": 17179869184,
+      "used_bytes": 12884901888,
+      "free_bytes": 4294967296,
+      "processes": [
+        { "pid": 1234, "name": "ollama", "used_bytes": 11811160064 }
+      ]
+    }
+  ],
+  "models": [
+    {
+      "loader": "ollama",
+      "name": "llama2:13b-q4",
+      "pid": 1234,
+      "gpu_index": 0,
+      "vram_bytes": 11811160064,
+      "context_tokens": 4096,
+      "context_max": 4096,
+      "arch": { "name": "llama", "layers": 40, "kv_heads": 40, "head_dim": 128, "kv_type_bits": 16 },
+      "estimated": true
+    }
+  ]
+}
