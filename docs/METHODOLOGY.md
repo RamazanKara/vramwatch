@@ -13,11 +13,11 @@ as such.
 For each GPU, vramwatch gathers:
 
 1. **Driver / OS truth**:
-   - total / used / free VRAM for the device, from `nvidia-smi`, `rocm-smi`, or on
+   - total / used / free VRAM for the device, from `nvidia-smi`, `amd-smi`, or on
      **Windows** the registry (`HardwareInformation.qwMemorySize` for the total) plus
      the built-in `GPU Adapter Memory\Dedicated Usage` performance counter
      (`typeperf`) for usage. This is what makes AMD work on Windows, where the
-     consumer driver ships no `rocm-smi`.
+     consumer driver ships no `amd-smi`.
    - per-process VRAM: NVIDIA via `nvidia-smi --query-compute-apps`; AMD via the
      kernel’s `/proc/<pid>/fdinfo` DRM interface on Linux (deduplicated by DRM
      client id and mapped to a device by PCI address). The `fdinfo` reader is

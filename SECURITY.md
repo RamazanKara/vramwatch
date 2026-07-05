@@ -1,6 +1,6 @@
 # Security Policy
 
-vramwatch is a read-only local tool: it shells out to `nvidia-smi`/`rocm-smi`
+vramwatch is a read-only local tool: it shells out to `nvidia-smi`/`amd-smi`
 and makes HTTP requests to inference servers on loopback. It does not write to
 your GPU, take any destructive action, or send data off your machine.
 

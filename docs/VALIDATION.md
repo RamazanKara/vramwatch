@@ -80,7 +80,7 @@ run on native hardware here yet, so real-world results from users are the next
 validation step:
 
 - NVIDIA hardware (the `nvidia-smi` path).
-- AMD on Linux (the `rocm-smi` provider and `/proc/<pid>/fdinfo` per-process path).
+- AMD on Linux (the `amd-smi` provider and `/proc/<pid>/fdinfo` per-process path).
   These are currently tested against captured fixtures. Note that **WSL2 can't
   stand in for this**: it exposes the GPU through `/dev/dxg` (dxgkrnl), with no
   `amdgpu` kernel module and no `/sys/class/kfd` topology, so `rocm-smi`/`amd-smi`

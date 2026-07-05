@@ -51,7 +51,7 @@ Run the diagnostic:
 vramwatch devices
 ```
 
-It lists which GPU tools (`nvidia-smi`, `rocm-smi`) and loaders (Ollama, llama.cpp)
+It lists which GPU tools (`nvidia-smi`, `amd-smi`) and loaders (Ollama, llama.cpp)
 were found. Common causes:
 
 - **Ollama** isn’t serving on `127.0.0.1:11434`. Set `OLLAMA_HOST`.

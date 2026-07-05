@@ -1,5 +1,5 @@
 // Package gpu discovers GPUs and their device-level VRAM usage by shelling out
-// to the vendor tools (nvidia-smi, rocm-smi). Parsing is split into pure
+// to the vendor tools (nvidia-smi, amd-smi). Parsing is split into pure
 // functions so it can be unit-tested against captured fixtures without a GPU.
 package gpu
 

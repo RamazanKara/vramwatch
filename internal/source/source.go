@@ -32,7 +32,7 @@ func (Live) Collect(ctx context.Context) ([]model.GPU, []model.LoaderModel, erro
 	return gpus, models, nil
 }
 
-func (Live) Describe() string { return "live (nvidia-smi/rocm-smi + ollama/llama.cpp)" }
+func (Live) Describe() string { return "live (nvidia-smi/amd-smi + ollama/llama.cpp)" }
 
 // Scenario is the on-disk format a Mock source replays.
 type Scenario struct {

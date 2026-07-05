@@ -63,38 +63,78 @@ func TestParseNvidiaAppsCommaInName(t *testing.T) {
 	}
 }
 
-func TestParseUintEdgeCases(t *testing.T) {
-	cases := map[string]uint64{
-		"":            0,
-		"   ":         0,
-		"\t":          0,
-		"25753026560": 25753026560,
-		"1.5 GB":      1,
-		"[N/A]":       0,
+// amd-smi static + metric fixtures, joined on the "gpu" index. GPU 1's asic block
+// has collapsed to the bare string "N/A" (a real amd-smi failure mode), and the
+// metric array is in the opposite GPU order to static to exercise the join.
+const amdStaticFixture = `[
+  {"gpu":0,"asic":{"market_name":"Radeon RX 7900 XT"},"bus":{"bdf":"0000:03:00.0"},"driver":{"name":"amdgpu","version":"6.7.0"},"vram":{"type":"GDDR6","size":{"value":20464,"unit":"MB"}}},
+  {"gpu":1,"asic":"N/A","bus":{"bdf":"0000:44:00.0"},"driver":{"name":"amdgpu","version":"6.7.0"},"vram":{"type":"GDDR6","size":{"value":20464,"unit":"MB"}}}
+]`
+
+const amdMetricFixture = `[
+  {"gpu":1,"mem_usage":{"total_vram":{"value":20464,"unit":"MB"},"used_vram":{"value":1000,"unit":"MB"},"free_vram":{"value":19464,"unit":"MB"}}},
+  {"gpu":0,"mem_usage":{"total_vram":{"value":20464,"unit":"MB"},"used_vram":{"value":5000,"unit":"MB"},"free_vram":{"value":15464,"unit":"MB"}}}
+]`
+
+func TestParseAMDSMI(t *testing.T) {
+	gpus, err := parseAMDSMI(amdStaticFixture, amdMetricFixture)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for in, want := range cases {
-		if got := parseUint(in); got != want {
-			t.Errorf("parseUint(%q) = %d, want %d", in, got, want)
-		}
+	if len(gpus) != 2 {
+		t.Fatalf("want 2 gpus, got %d", len(gpus))
+	}
+	g0 := gpus[0]
+	if g0.Index != 0 || g0.Name != "Radeon RX 7900 XT" {
+		t.Errorf("gpu0 identity wrong: %+v", g0)
+	}
+	if g0.Vendor != model.VendorAMD || g0.Driver != "6.7.0" || g0.PCIBus != "0000:03:00.0" {
+		t.Errorf("gpu0 fields wrong: %+v", g0)
+	}
+	// "MB" values are MiB-magnitude: 20464 * 1 MiB.
+	if g0.TotalBytes != 20464*model.MiB {
+		t.Errorf("gpu0 total = %d, want %d", g0.TotalBytes, uint64(20464*model.MiB))
+	}
+	// Joined to gpu 0's metric entry (used 5000), not gpu 1's (used 1000), despite
+	// the metric array being in the opposite order.
+	if g0.UsedBytes != 5000*model.MiB {
+		t.Errorf("gpu0 used = %d, want %d (join by gpu index)", g0.UsedBytes, uint64(5000*model.MiB))
+	}
+	if g0.FreeBytes != 15464*model.MiB {
+		t.Errorf("gpu0 free = %d", g0.FreeBytes)
+	}
+	// GPU 1's asic collapsed to "N/A": name falls back, but usage still joins.
+	g1 := gpus[1]
+	if g1.Name != "AMD GPU 1" {
+		t.Errorf("gpu1 name = %q, want the fallback", g1.Name)
+	}
+	if g1.UsedBytes != 1000*model.MiB {
+		t.Errorf("gpu1 used = %d, want %d", g1.UsedBytes, uint64(1000*model.MiB))
 	}
 }
 
-const rocmFixture = `{
-  "card0": {
-    "VRAM Total Memory (B)": "25753026560",
-    "VRAM Total Used Memory (B)": "24696061952",
-    "Card Series": "Radeon RX 7900 XTX",
-    "Card Model": "0x744c",
-    "PCI Bus": "0000:03:00.0",
-    "Driver version": "6.7.0"
-  },
-  "system": {
-    "Driver version": "6.7.0"
-  }
-}`
+// Without metric output, a GPU is still reported from static with its capacity;
+// usage is left at zero rather than guessed.
+func TestParseAMDSMINoMetric(t *testing.T) {
+	gpus, err := parseAMDSMI(amdStaticFixture, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gpus) != 2 {
+		t.Fatalf("want 2 gpus, got %d", len(gpus))
+	}
+	g0 := gpus[0]
+	if g0.TotalBytes != 20464*model.MiB || g0.UsedBytes != 0 || g0.FreeBytes != 20464*model.MiB {
+		t.Errorf("no-metric fallback wrong: %+v", g0)
+	}
+}
 
-func TestParseROCm(t *testing.T) {
-	gpus, err := parseROCm(rocmFixture)
+// Missing fields ("N/A" blocks) and bare-number leaves (old amd-smi builds) are
+// tolerated, and free is computed from total-used when the CLI reports "N/A".
+func TestParseAMDSMITolerant(t *testing.T) {
+	const stat = `[{"gpu":0,"asic":{"market_name":"N/A"},"bus":"N/A","driver":"N/A","vram":{"size":16384}}]`
+	const metric = `[{"gpu":0,"mem_usage":{"total_vram":16384,"used_vram":{"value":2048,"unit":"MB"},"free_vram":"N/A"}}]`
+	gpus, err := parseAMDSMI(stat, metric)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,58 +142,31 @@ func TestParseROCm(t *testing.T) {
 		t.Fatalf("want 1 gpu, got %d", len(gpus))
 	}
 	g := gpus[0]
-	if g.Name != "Radeon RX 7900 XTX" {
+	if g.Name != "AMD GPU 0" { // asic market_name "N/A" -> fallback
 		t.Errorf("name = %q", g.Name)
 	}
-	if g.Vendor != model.VendorAMD {
-		t.Errorf("vendor = %q", g.Vendor)
+	if g.PCIBus != "" || g.Driver != "" { // bus/driver blocks were the bare string "N/A"
+		t.Errorf("expected empty bus/driver, got bus=%q driver=%q", g.PCIBus, g.Driver)
 	}
-	if g.TotalBytes != 25753026560 {
-		t.Errorf("total = %d", g.TotalBytes)
+	if g.TotalBytes != 16384*model.MiB { // bare-number total
+		t.Errorf("total = %d, want %d", g.TotalBytes, uint64(16384*model.MiB))
 	}
-	if g.FreeBytes != 25753026560-24696061952 {
-		t.Errorf("free = %d", g.FreeBytes)
+	if g.UsedBytes != 2048*model.MiB {
+		t.Errorf("used = %d", g.UsedBytes)
 	}
-	if g.Driver != "6.7.0" {
-		t.Errorf("driver = %q", g.Driver)
-	}
-	if g.PCIBus != "0000:03:00.0" {
-		t.Errorf("pci bus = %q", g.PCIBus)
+	if g.FreeBytes != (16384-2048)*model.MiB { // free_vram "N/A" -> total - used
+		t.Errorf("free = %d, want %d", g.FreeBytes, uint64((16384-2048)*model.MiB))
 	}
 }
 
-// A nested object value (ROCm 6/7 emit these) must not make json.Unmarshal fail
-// for the whole document and drop every AMD GPU.
-func TestParseROCmNestedObjectValue(t *testing.T) {
-	const j = `{
-	  "card0": {
-	    "VRAM Total Memory (B)": "25753026560",
-	    "VRAM Total Used Memory (B)": "1000",
-	    "Card Series": "Radeon RX 7900 XTX",
-	    "GPU Metrics": {"temperature": "45.0"}
-	  },
-	  "system": {"Driver version": "6.7.0"}
-	}`
-	gpus, err := parseROCm(j)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(gpus) != 1 {
-		t.Fatalf("want 1 gpu despite the nested object, got %d", len(gpus))
-	}
-	if gpus[0].Name != "Radeon RX 7900 XTX" || gpus[0].TotalBytes != 25753026560 {
-		t.Errorf("card mis-parsed: %+v", gpus[0])
-	}
-}
-
-// A card that reports no meminfo (headless/masked) must not appear as a phantom
-// 0-byte GPU.
-func TestParseROCmSkipsPhantomCard(t *testing.T) {
-	const j = `{
-	  "card0": {"VRAM Total Memory (B)": "25753026560", "Card Series": "Radeon RX 7900 XTX"},
-	  "card1": {"PCI Bus": "0000:44:00.0"}
-	}`
-	gpus, err := parseROCm(j)
+// A device with NO VRAM info AND no identity (masked/unsupported) is skipped, not
+// shown as a phantom 0-byte GPU. Note bdf alone doesn't make it a real GPU.
+func TestParseAMDSMISkipsPhantom(t *testing.T) {
+	const stat = `[
+	  {"gpu":0,"asic":{"market_name":"Radeon RX 7900 XT"},"bus":{"bdf":"0000:03:00.0"},"vram":{"size":{"value":20464,"unit":"MB"}}},
+	  {"gpu":1,"asic":"N/A","bus":{"bdf":"0000:44:00.0"},"vram":"N/A"}
+	]`
+	gpus, err := parseAMDSMI(stat, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,34 +174,77 @@ func TestParseROCmSkipsPhantomCard(t *testing.T) {
 		t.Fatalf("want 1 real gpu, got %d: %+v", len(gpus), gpus)
 	}
 	if gpus[0].Index != 0 {
-		t.Errorf("kept the wrong card: %+v", gpus[0])
+		t.Errorf("kept the wrong gpu: %+v", gpus[0])
 	}
 }
 
-// With no human-readable product name, fall back to "AMD GPU N", never the hex
-// device id from "GPU ID"/"Card Model".
-func TestParseROCmNameFallbackNotHex(t *testing.T) {
-	const j = `{"card0": {"VRAM Total Memory (B)": "25753026560", "GPU ID": "0x744c", "Card Model": "0x744c"}}`
-	gpus, err := parseROCm(j)
+// A card amd-smi can name but not size (vram + mem_usage both "N/A", common on
+// Windows) is kept with an unknown capacity rather than dropped.
+func TestParseAMDSMIKeepsIdentifiableCard(t *testing.T) {
+	const stat = `[{"gpu":0,"asic":{"market_name":"Radeon RX 7900 XT"},"bus":{"bdf":"0000:03:00.0"},"driver":{"version":"6.7.0"},"vram":"N/A"}]`
+	const metric = `[{"gpu":0,"mem_usage":"N/A"}]`
+	gpus, err := parseAMDSMI(stat, metric)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gpus) != 1 {
+		t.Fatalf("want the identifiable card kept, got %d gpus", len(gpus))
+	}
+	g := gpus[0]
+	if g.Name != "Radeon RX 7900 XT" || g.PCIBus != "0000:03:00.0" || g.Driver != "6.7.0" {
+		t.Errorf("identity lost: %+v", g)
+	}
+	if g.TotalBytes != 0 {
+		t.Errorf("total = %d, want 0 (unknown capacity)", g.TotalBytes)
+	}
+}
+
+// When metric gives total and free but used is "N/A", used is derived as
+// total - free rather than left at 0 (which would draw a too-empty bar).
+func TestParseAMDSMIUsedFromFree(t *testing.T) {
+	const stat = `[{"gpu":0,"asic":{"market_name":"X"},"vram":{"size":{"value":100,"unit":"MB"}}}]`
+	const metric = `[{"gpu":0,"mem_usage":{"total_vram":{"value":100,"unit":"MB"},"used_vram":"N/A","free_vram":{"value":40,"unit":"MB"}}}]`
+	gpus, err := parseAMDSMI(stat, metric)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(gpus) != 1 {
 		t.Fatalf("want 1 gpu, got %d", len(gpus))
 	}
-	if gpus[0].Name != "AMD GPU 0" {
-		t.Errorf("name = %q, want \"AMD GPU 0\" (not a hex id)", gpus[0].Name)
+	g := gpus[0]
+	if g.UsedBytes != 60*model.MiB || g.FreeBytes != 40*model.MiB || g.TotalBytes != 100*model.MiB {
+		t.Errorf("used-from-free wrong: used=%d free=%d total=%d", g.UsedBytes, g.FreeBytes, g.TotalBytes)
 	}
 }
 
-// Newer ROCm may spell the product name market_name.
-func TestParseROCmMarketName(t *testing.T) {
-	const j = `{"card0": {"VRAM Total Memory (B)": "25753026560", "market_name": "Radeon RX 7900 XT"}}`
-	gpus, err := parseROCm(j)
+// The "gpu" join key may be a quoted string on some builds; it must still parse
+// and join static<->metric.
+func TestParseAMDSMIQuotedIndex(t *testing.T) {
+	const stat = `[{"gpu":"0","asic":{"market_name":"X"},"vram":{"size":{"value":8192,"unit":"MB"}}}]`
+	const metric = `[{"gpu":"0","mem_usage":{"used_vram":{"value":1024,"unit":"MB"}}}]`
+	gpus, err := parseAMDSMI(stat, metric)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gpus) != 1 || gpus[0].Name != "Radeon RX 7900 XT" {
-		t.Fatalf("market_name not used as name: %+v", gpus)
+	if len(gpus) != 1 {
+		t.Fatalf("want 1 gpu, got %d", len(gpus))
+	}
+	if gpus[0].Index != 0 || gpus[0].UsedBytes != 1024*model.MiB {
+		t.Errorf("quoted index not joined: %+v", gpus[0])
+	}
+}
+
+// An implausibly huge VRAM leaf is rejected (0), not saturated to a bogus total.
+func TestParseAMDSMIRejectsGarbageVRAM(t *testing.T) {
+	const stat = `[{"gpu":0,"asic":{"market_name":"X"},"vram":{"size":{"value":1e30,"unit":"GB"}}}]`
+	gpus, err := parseAMDSMI(stat, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gpus) != 1 { // kept via its name, but the garbage capacity is rejected
+		t.Fatalf("want 1 gpu, got %d", len(gpus))
+	}
+	if gpus[0].TotalBytes != 0 {
+		t.Errorf("garbage total not rejected: %d", gpus[0].TotalBytes)
 	}
 }

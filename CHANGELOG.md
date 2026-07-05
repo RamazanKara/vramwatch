@@ -6,6 +6,27 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-05
+
+Switch the AMD provider from `rocm-smi` to `amd-smi`.
+
+### Changed
+- **AMD GPUs are now read via `amd-smi` instead of `rocm-smi`.** `amd-smi` is AMD's
+  current SMI CLI; `rocm-smi` is deprecated in its favour, so vramwatch no longer
+  calls `rocm-smi` at all. It runs `amd-smi static --json` (identity + capacity) and
+  `amd-smi metric --mem-usage --json` (live VRAM used/free), joined on the per-GPU
+  index. The new parser handles `amd-smi`'s JSON-array root and `{value, unit}`
+  leaves, tolerates any field or block collapsing to `"N/A"`, and corrects the
+  `MB`-labelled values (which are really MiB). The name-fallback safeguard is
+  preserved: a GPU with no product name shows as `AMD GPU N`, and an entry with
+  neither VRAM numbers nor identity is skipped rather than shown as a phantom.
+- The `amd-smi` parser is hardened against degraded output (found via adversarial
+  review): a card `amd-smi` can name but not size — common on Windows, where many
+  queries return `"N/A"` — is kept with an unknown capacity instead of vanishing;
+  `used` is derived from `total − free` (and vice-versa) when only one is reported;
+  a quoted or float `gpu` index still joins; and an implausibly huge VRAM value is
+  rejected rather than saturating the total.
+
 ## [0.5.0] - 2026-07-05
 
 Feature-complete. Every planned GPU vendor (NVIDIA, AMD) and loader (Ollama,
@@ -131,7 +152,8 @@ First public release.
 - `demo` and `mock:PATH` data sources for hardware-free demos, tests, and CI.
 - Single static, dependency-free binary for Linux, macOS, and Windows.
 
-[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/RamazanKara/vramwatch/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/RamazanKara/vramwatch/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/RamazanKara/vramwatch/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RamazanKara/vramwatch/compare/v0.2.0...v0.3.0

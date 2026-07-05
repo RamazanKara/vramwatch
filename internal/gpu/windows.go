@@ -14,7 +14,7 @@ import (
 // (vendor), and description (name).
 const winGPUClassKey = `HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}`
 
-// Windows reports GPU VRAM on Windows, where the vendor CLIs (rocm-smi) usually
+// Windows reports GPU VRAM on Windows, where the vendor CLIs (amd-smi) usually
 // aren't present. Total VRAM comes from the registry; usage from the built-in
 // "GPU Adapter Memory" performance counter via typeperf. NVIDIA is left to
 // nvidia-smi (which ships with its Windows driver) to avoid double-counting.

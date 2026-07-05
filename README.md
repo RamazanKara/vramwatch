@@ -19,7 +19,7 @@
 
 ---
 
-`nvidia-smi` and `rocm-smi` tell you a GPU is using 23.5 of 24 GiB. They can’t tell
+`nvidia-smi` and `amd-smi` tell you a GPU is using 23.5 of 24 GiB. They can’t tell
 you why: how much is model weights, how much is the KV cache that grows with
 your context, and how much is the desktop compositor you forgot about. So when a
 70B model that “should fit” OOMs at 22 GiB, you’re guessing.
@@ -28,7 +28,7 @@ vramwatch attributes VRAM inside the inference process and shows you the split
 live:
 
 ```text
-vramwatch v0.5.0
+vramwatch v0.6.0
 
 GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
 [███████████████████████████████████████████████]  23.75 GiB / 24.00 GiB used
@@ -130,7 +130,7 @@ GPU 0  AMD Radeon RX 7900 XTX
 
 vramwatch combines two sources per GPU:
 
-1. **The driver / OS.** Device total/used/free from `nvidia-smi`, `rocm-smi`, or
+1. **The driver / OS.** Device total/used/free from `nvidia-smi`, `amd-smi`, or
    (on Windows) the registry + `GPU Adapter Memory` performance counter. Plus
    per-process VRAM from `nvidia-smi` (NVIDIA) or `/proc/<pid>/fdinfo` (AMD/Linux).
    This is ground truth.
@@ -157,7 +157,7 @@ estimated, is in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
 
 | Figure | How it’s obtained | Trust |
 |--------|-------------------|-------|
-| Device total / used / free | Driver (`nvidia-smi`/`rocm-smi`) | measured |
+| Device total / used / free | Driver (`nvidia-smi`/`amd-smi`) | measured |
 | Per-process VRAM (NVIDIA) | Driver compute-apps query | measured |
 | KV cache | `arch × context × dtype` (formula) | **estimated**; exact at f16/bf16/f32, conservative (rounded up) for a quantized cache |
 | Weights (Ollama) | `process VRAM − KV` | **estimated** |
@@ -172,10 +172,10 @@ Everything in the estimated rows is labelled `estimated` in the output. See the
 | GPU vendor | via                                   | device totals | per-process | notes |
 |------------|---------------------------------------|:---:|:---:|-------|
 | NVIDIA     | `nvidia-smi`                          | ✅ | ✅ | full support |
-| AMD (Linux)| `rocm-smi` + `/proc` fdinfo           | ✅ | ✅ | device totals via `rocm-smi`, per-process via the DRM `fdinfo` interface; field reports welcome |
+| AMD (Linux)| `amd-smi` + `/proc` fdinfo            | ✅ | ✅ | device totals via `amd-smi`, per-process via the DRM `fdinfo` interface; field reports welcome |
 | AMD (Windows)| registry + `typeperf` GPU counters  | ✅ | n/a | device totals; per-process is a roadmap item |
 
-On Windows, where AMD's consumer driver doesn't ship `rocm-smi`, vramwatch reads
+On Windows, where AMD's consumer driver doesn't ship `amd-smi`, vramwatch reads
 the real VRAM size from the registry and usage from the built-in `GPU Adapter
 Memory` performance counter (`typeperf`), so an AMD card is detected with no extra
 tooling. This was validated against a real Radeon RX 7900 XT (numbers match the
@@ -214,11 +214,9 @@ vramwatch is deliberately honest about what it can and can’t know:
 - **Prediction is linear** in the KV cache and holds weights/overhead constant. It’s a
   good planning estimate, not a guarantee.
 
-**Roadmap:** allocator-level attribution, KV-dtype auto-detection, an `amd-smi`
-fallback (newer ROCm deprecates `rocm-smi` in favour of `amd-smi`, whose JSON has a
-different shape), an Intel GPU provider (the `fdinfo` reader already handles i915),
-reliable AMD per-process on Windows, partial-offload awareness, and vLLM / MLX /
-Apple-Metal providers.
+**Roadmap:** allocator-level attribution, KV-dtype auto-detection, an Intel GPU
+provider (the `fdinfo` reader already handles i915), reliable AMD per-process on
+Windows, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
 
 ## Feature status
 
@@ -237,7 +235,7 @@ as field reports come in, but the capabilities themselves are shipped:
       the same model's split via independent code paths (`/api/show` vs. direct GGUF
       parsing).
 - [x] **NVIDIA and AMD-on-Linux — implemented and fixture-tested.** The `nvidia-smi`
-      path and the `rocm-smi` + `/proc/<pid>/fdinfo` path are shipped and exercised
+      path and the `amd-smi` + `/proc/<pid>/fdinfo` path are shipped and exercised
       against captured fixtures; they haven't yet been run on native hardware here,
       so field reports from those setups are especially welcome.
 - [x] **Stable machine-readable output.** A golden test pins the exact `--json`
