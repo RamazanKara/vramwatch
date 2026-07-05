@@ -1,0 +1,37 @@
+name: Bug report
+description: Something vramwatch got wrong (bad numbers, a crash, a misparse)
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you run, and what was wrong with the output?
+      placeholder: "vramwatch snapshot showed weights as 0 GiB even though a model is loaded"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU + driver
+      placeholder: "AMD RX 7900 XTX, ROCm 6.7.0  /  NVIDIA RTX 4090, driver 550.90"
+    validations:
+      required: true
+  - type: input
+    id: loader
+    attributes:
+      label: Loader
+      placeholder: "Ollama 0.x / llama.cpp / none"
+  - type: textarea
+    id: output
+    attributes:
+      label: Output of `vramwatch snapshot --json`
+      description: This is the most useful thing you can paste. Redact anything sensitive.
+      render: json
+  - type: input
+    id: version
+    attributes:
+      label: vramwatch version
+      placeholder: "output of `vramwatch version`"
+    validations:
+      required: true
