@@ -46,13 +46,35 @@ The linear KV growth with context, which is the main thing the tool exists to sh
 was confirmed by reloading the model at 4× the context and watching the KV segment
 grow exactly 4×.
 
+## llama.cpp + a real GGUF, Windows 11
+
+Loader: llama.cpp `llama-server` b9873 (Vulkan backend on the same RX 7900 XT),
+serving the qwen2.5:0.5b GGUF (379 MB q4) with `-ngl 99`.
+
+This exercises a completely different code path from Ollama: vramwatch reads
+`/props` for the model path and context, then parses the **GGUF file header
+directly** for the architecture and weight size (the Ollama path gets those from
+`/api/show` instead). Both reached the same answer:
+
+- weights **379.4 MiB**, which is the GGUF file's actual size on disk (379 MB) read
+  straight from the file.
+- KV cache **48 MiB** at ctx 4096, i.e. the same 12 KiB/token the Ollama run
+  produced, because the GGUF parser recovered the same arch (24 layers, 2 KV heads,
+  head_dim 64) that `/api/show` reported.
+
+So the GGUF header parser (previously only tested against a synthetic fixture) reads
+a real model file correctly, and two independent loaders agree on the split.
+
+This run also surfaced and fixed a real Windows bug: llama.cpp's `/props` returns a
+Windows path, and the model name was showing the full path because `path.Base`
+doesn't split on backslashes.
+
 ## Still to validate
 
 - NVIDIA hardware (the `nvidia-smi` path).
 - AMD on Linux (the `rocm-smi` provider and `/proc/<pid>/fdinfo` per-process path).
   These are currently tested only against captured fixtures.
 - Multiple GPUs, and a range of drivers.
-- llama.cpp with a real GGUF (the split via GGUF-derived weights).
 
 If you run vramwatch on your hardware, posting the result (and any mismatch) is the
 most useful contribution. See the issues link in the README.

@@ -286,6 +286,19 @@ func TestLlamaCppGGUFNoArch(t *testing.T) {
 	}
 }
 
+func TestBaseNameSeparators(t *testing.T) {
+	cases := map[string]string{
+		`C:\Users\ramaz\models\Qwen2.5-0.5B-Q4_K_M.gguf`: "Qwen2.5-0.5B-Q4_K_M.gguf",
+		"/models/Meta-Llama-3-8B.Q4_K_M.gguf":            "Meta-Llama-3-8B.Q4_K_M.gguf",
+		"model.gguf":                                     "model.gguf",
+	}
+	for in, want := range cases {
+		if got := baseName(in); got != want {
+			t.Errorf("baseName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestParseLlamaProps(t *testing.T) {
 	var props propsResponse
 	props.ModelPath = "/models/Meta-Llama-3-8B-Instruct.Q4_K_M.gguf"

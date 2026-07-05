@@ -171,4 +171,7 @@ func atoi(s string) int {
 }
 
 // baseName is used by the llama.cpp provider but lives here to share path use.
-func baseName(p string) string { return path.Base(p) }
+// baseName returns the file name of a path, handling both Windows ("\") and
+// POSIX ("/") separators, since a llama.cpp server on Windows reports Windows
+// paths that path.Base alone would not split.
+func baseName(p string) string { return path.Base(strings.ReplaceAll(p, `\`, "/")) }
