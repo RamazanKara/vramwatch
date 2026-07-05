@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/deps-0-brightgreen" alt="Zero dependencies">
 </p>
 
-<p align="center"><img src="docs/sample/vramwatch-card.svg" alt="vramwatch scorecard" width="720"></p>
+<p align="center"><img src="docs/demo.gif" alt="vramwatch watching the KV cache grow until OOM" width="720"></p>
 
 ---
 
@@ -85,6 +85,10 @@ No GPU handy? Every command takes `--source`:
 vramwatch watch --source demo   # synthetic card whose KV cache grows until OOM
 vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json
 ```
+
+`snapshot --svg` writes a shareable scorecard:
+
+<p align="center"><img src="docs/sample/vramwatch-card.svg" alt="vramwatch SVG scorecard" width="640"></p>
 
 ### `predict`
 

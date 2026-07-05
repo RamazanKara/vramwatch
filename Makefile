@@ -33,6 +33,9 @@ card: build ## regenerate the committed sample scorecard + JSON
 	./$(BINARY) snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --static --svg docs/sample/vramwatch-card.svg
 	./$(BINARY) snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --static --json > docs/sample/snapshot.json
 
+gif: ## regenerate docs/demo.gif (standalone module; fetches golang.org/x/image)
+	cd docs/gifgen && go run . ../demo.gif
+
 clean:
 	rm -f $(BINARY) $(BINARY).exe
 	rm -rf dist
