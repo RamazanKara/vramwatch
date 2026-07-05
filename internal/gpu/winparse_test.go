@@ -80,6 +80,21 @@ func TestVendorFromDeviceID(t *testing.T) {
 	}
 }
 
+func TestLooksNVIDIA(t *testing.T) {
+	yes := []string{"NVIDIA GeForce RTX 4090", "Quadro P2000", "Tesla T4", "nvidia geforce gtx 1080"}
+	no := []string{"AMD Radeon RX 7900 XT", "Intel Arc A770", "Microsoft Basic Render Driver", ""}
+	for _, n := range yes {
+		if !looksNVIDIA(n) {
+			t.Errorf("%q should look like NVIDIA", n)
+		}
+	}
+	for _, n := range no {
+		if looksNVIDIA(n) {
+			t.Errorf("%q should NOT look like NVIDIA", n)
+		}
+	}
+}
+
 func TestParseRegUint(t *testing.T) {
 	cases := map[string]uint64{
 		"0x4ff000000": 21458059264,

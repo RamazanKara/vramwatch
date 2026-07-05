@@ -55,6 +55,20 @@ func parseRegUint(s string) uint64 {
 	return n
 }
 
+// looksNVIDIA reports whether a device description names an NVIDIA GPU. It's a
+// fallback for the NVIDIA skip when the PCI vendor id can't be read (e.g. the
+// MatchingDeviceId registry query failed), so the Windows provider never
+// double-counts a card that nvidia-smi already reports.
+func looksNVIDIA(name string) bool {
+	n := strings.ToLower(name)
+	for _, k := range []string{"nvidia", "geforce", "quadro", "tesla", " rtx", " gtx"} {
+		if strings.Contains(n, k) {
+			return true
+		}
+	}
+	return false
+}
+
 // vendorFromDeviceID maps a PCI device id to a GPU vendor.
 func vendorFromDeviceID(s string) model.Vendor {
 	u := strings.ToUpper(s)

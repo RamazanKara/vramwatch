@@ -42,44 +42,43 @@ func (Windows) Sample(ctx context.Context) ([]model.GPU, error) {
 	for _, sk := range subkeys {
 		total := parseRegUint(qw[sk])
 		if total == 0 {
-			continue
-		}
-		vendor := vendorFromDeviceID(dev[sk])
-		if vendor == model.VendorNVIDIA {
-			continue // handled by nvidia-smi
+			continue // no dedicated VRAM (virtual display, or an integrated GPU)
 		}
 		name := desc[sk]
+		vendor := vendorFromDeviceID(dev[sk])
+		if vendor == model.VendorNVIDIA || looksNVIDIA(name) {
+			continue // NVIDIA is reported by nvidia-smi; don't double-count
+		}
 		if name == "" {
 			name = "GPU"
 		}
-		gpus = append(gpus, model.GPU{Index: len(gpus), Name: name, Vendor: vendor, TotalBytes: total})
+		// FreeBytes defaults to the whole card; usage is filled in below only
+		// when it can be attributed to a device unambiguously.
+		gpus = append(gpus, model.GPU{Index: len(gpus), Name: name, Vendor: vendor, TotalBytes: total, FreeBytes: total})
 	}
 	if len(gpus) == 0 {
 		return nil, nil
 	}
 
-	// Device usage from the GPU Adapter Memory perf counter, keyed by LUID.
-	usage := map[string]uint64{}
-	if out, err := run(ctx, "typeperf", `\GPU Adapter Memory(*)\Dedicated Usage`, "-sc", "1"); err == nil {
-		usage = parseTypeperfAdapter(out)
-	}
-	// Pair each GPU with an adapter LUID by usage (highest first). This is exact
-	// for a single GPU (the common case) and best-effort for multiple.
-	luids := make([]string, 0, len(usage))
-	for l := range usage {
-		luids = append(luids, l)
-	}
-	sort.Slice(luids, func(i, j int) bool { return usage[luids[i]] > usage[luids[j]] })
-	for i := range gpus {
-		if i >= len(luids) {
-			break
+	// Device usage comes from the GPU Adapter Memory perf counter, keyed by an
+	// opaque adapter LUID. We can only map it to a physical card unambiguously
+	// when there is exactly one non-NVIDIA GPU (the common case). With several,
+	// there is no reliable LUID<->registry join, so usage is left unknown (the
+	// card reports full free) rather than guessed onto the wrong device.
+	if len(gpus) == 1 {
+		if out, err := run(ctx, "typeperf", `\GPU Adapter Memory(*)\Dedicated Usage`, "-sc", "1"); err == nil {
+			var used uint64
+			for _, u := range parseTypeperfAdapter(out) {
+				if u > used {
+					used = u // the real GPU dominates; software adapters report ~0
+				}
+			}
+			if used > gpus[0].TotalBytes {
+				used = gpus[0].TotalBytes
+			}
+			gpus[0].UsedBytes = used
+			gpus[0].FreeBytes = gpus[0].TotalBytes - used
 		}
-		used := usage[luids[i]]
-		if used > gpus[i].TotalBytes {
-			used = gpus[i].TotalBytes
-		}
-		gpus[i].UsedBytes = used
-		gpus[i].FreeBytes = gpus[i].TotalBytes - used
 	}
 	return gpus, nil
 }

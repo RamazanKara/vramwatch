@@ -179,9 +179,11 @@ On Windows — where AMD's consumer driver doesn't ship `rocm-smi` — vramwatch
 the **real VRAM size from the registry** and **usage from the built-in `GPU Adapter
 Memory` performance counter** (`typeperf`), so an AMD card is detected with no extra
 tooling. This was validated against a real Radeon RX 7900 XT (numbers match the
-registry and the counter exactly). Per-process VRAM on NVIDIA comes from
-`nvidia-smi`, and on AMD/Linux from `/proc/<pid>/fdinfo`; it lets vramwatch use the
-*real* process footprint instead of the loader's self-report.
+registry and the counter exactly). Discrete **Intel Arc** cards go through the same
+Windows path but are untested; integrated GPUs (no dedicated VRAM) aren't detected,
+and on a multi-GPU box usage is left unattributed rather than guessed. Per-process
+VRAM on NVIDIA comes from `nvidia-smi`, and on AMD/Linux from `/proc/<pid>/fdinfo`;
+it lets vramwatch use the *real* process footprint instead of the loader's self-report.
 
 | Loader   | via                       | model + VRAM | weights/KV split |
 |----------|---------------------------|:---:|:---:|

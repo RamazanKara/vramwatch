@@ -14,9 +14,12 @@ Focus: real-hardware validation → **vramwatch now works on Windows AMD**.
 - **Windows GPU provider.** On Windows — where AMD's consumer driver ships no
   `rocm-smi` — vramwatch reads the real VRAM size from the registry
   (`HardwareInformation.qwMemorySize`) and usage from the built-in `GPU Adapter
-  Memory\Dedicated Usage` performance counter (`typeperf`). AMD and Intel GPUs are
-  now detected on Windows with no extra tooling; NVIDIA stays on `nvidia-smi`.
-  Validated against a real Radeon RX 7900 XT — total/used match ground truth exactly.
+  Memory\Dedicated Usage` performance counter (`typeperf`), with no extra tooling;
+  NVIDIA stays on `nvidia-smi`. Validated live against a real **Radeon RX 7900 XT** —
+  total/used match the registry and the counter exactly. (Discrete Intel Arc cards
+  go through the same path but are **untested**; integrated GPUs, which report no
+  dedicated VRAM, are not detected. Multi-GPU usage is left unattributed rather than
+  guessed.)
 - `VendorIntel`, and an OS-specific provider hook so more platforms can plug in.
 
 ### Fixed
