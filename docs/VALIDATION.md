@@ -3,7 +3,9 @@
 vramwatch's engine is unit-tested against fixtures, but the numbers below were
 produced by running it against real hardware and a real inference server, then
 cross-checked against independent ground truth. This page records what has been
-validated so far. For what hasn't, see the Road to 1.0 in the README.
+validated on hardware so far. Paths that are implemented and fixture-tested but not
+yet run on native hardware (NVIDIA, AMD-on-Linux) are listed under "Awaiting field
+reports" below.
 
 ## AMD Radeon RX 7900 XT + Ollama, Windows 11
 
@@ -71,11 +73,15 @@ This run also surfaced and fixed a real Windows bug: llama.cpp's `/props` return
 Windows path, and the model name was showing the full path because `path.Base`
 doesn't split on backslashes.
 
-## Still to validate
+## Awaiting field reports
+
+These paths are implemented and pass their fixture tests; they simply haven't been
+run on native hardware here yet, so real-world results from users are the next
+validation step:
 
 - NVIDIA hardware (the `nvidia-smi` path).
 - AMD on Linux (the `rocm-smi` provider and `/proc/<pid>/fdinfo` per-process path).
-  These are currently tested only against captured fixtures. Note that **WSL2 can't
+  These are currently tested against captured fixtures. Note that **WSL2 can't
   stand in for this**: it exposes the GPU through `/dev/dxg` (dxgkrnl), with no
   `amdgpu` kernel module and no `/sys/class/kfd` topology, so `rocm-smi`/`amd-smi`
   fail with "amdgpu not found in modules" and `/proc/<pid>/fdinfo` carries no `drm-*`

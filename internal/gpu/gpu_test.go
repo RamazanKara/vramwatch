@@ -121,3 +121,74 @@ func TestParseROCm(t *testing.T) {
 		t.Errorf("pci bus = %q", g.PCIBus)
 	}
 }
+
+// A nested object value (ROCm 6/7 emit these) must not make json.Unmarshal fail
+// for the whole document and drop every AMD GPU.
+func TestParseROCmNestedObjectValue(t *testing.T) {
+	const j = `{
+	  "card0": {
+	    "VRAM Total Memory (B)": "25753026560",
+	    "VRAM Total Used Memory (B)": "1000",
+	    "Card Series": "Radeon RX 7900 XTX",
+	    "GPU Metrics": {"temperature": "45.0"}
+	  },
+	  "system": {"Driver version": "6.7.0"}
+	}`
+	gpus, err := parseROCm(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gpus) != 1 {
+		t.Fatalf("want 1 gpu despite the nested object, got %d", len(gpus))
+	}
+	if gpus[0].Name != "Radeon RX 7900 XTX" || gpus[0].TotalBytes != 25753026560 {
+		t.Errorf("card mis-parsed: %+v", gpus[0])
+	}
+}
+
+// A card that reports no meminfo (headless/masked) must not appear as a phantom
+// 0-byte GPU.
+func TestParseROCmSkipsPhantomCard(t *testing.T) {
+	const j = `{
+	  "card0": {"VRAM Total Memory (B)": "25753026560", "Card Series": "Radeon RX 7900 XTX"},
+	  "card1": {"PCI Bus": "0000:44:00.0"}
+	}`
+	gpus, err := parseROCm(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gpus) != 1 {
+		t.Fatalf("want 1 real gpu, got %d: %+v", len(gpus), gpus)
+	}
+	if gpus[0].Index != 0 {
+		t.Errorf("kept the wrong card: %+v", gpus[0])
+	}
+}
+
+// With no human-readable product name, fall back to "AMD GPU N", never the hex
+// device id from "GPU ID"/"Card Model".
+func TestParseROCmNameFallbackNotHex(t *testing.T) {
+	const j = `{"card0": {"VRAM Total Memory (B)": "25753026560", "GPU ID": "0x744c", "Card Model": "0x744c"}}`
+	gpus, err := parseROCm(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gpus) != 1 {
+		t.Fatalf("want 1 gpu, got %d", len(gpus))
+	}
+	if gpus[0].Name != "AMD GPU 0" {
+		t.Errorf("name = %q, want \"AMD GPU 0\" (not a hex id)", gpus[0].Name)
+	}
+}
+
+// Newer ROCm may spell the product name market_name.
+func TestParseROCmMarketName(t *testing.T) {
+	const j = `{"card0": {"VRAM Total Memory (B)": "25753026560", "market_name": "Radeon RX 7900 XT"}}`
+	gpus, err := parseROCm(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gpus) != 1 || gpus[0].Name != "Radeon RX 7900 XT" {
+		t.Fatalf("market_name not used as name: %+v", gpus)
+	}
+}

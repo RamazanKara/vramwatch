@@ -6,6 +6,13 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-05
+
+Feature-complete. Every planned GPU vendor (NVIDIA, AMD) and loader (Ollama,
+llama.cpp) is implemented and covered by fixture tests. Still `0.x` — the CLI and
+JSON shapes can change as field reports arrive — but the capabilities are shipped.
+See "Feature status" in the README.
+
 ### Added
 - **Measured weights for Ollama.** vramwatch now reads the model's GGUF blob (via
   the path in `/api/show`) for a real weight size, instead of leaving weights as the
@@ -19,12 +26,23 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - llama.cpp model names on Windows showed the full path (`path.Base` doesn't split
   on `\`); now the basename is shown. Found while validating against a real GGUF.
+- **rocm-smi parser hardened against real-world output.** Three defects that would
+  bite a real Linux+AMD user are fixed: (1) a card value that nests a JSON object
+  (ROCm 6/7 emit these — metrics, MI300 partition info) no longer makes the whole
+  parse fail and drop *every* AMD GPU; (2) a card that reports no VRAM
+  (headless/masked) is skipped instead of appearing as a phantom 0-byte GPU; (3) the
+  GPU name no longer falls back to the hex device id (`0x744c`) — it uses the product
+  name or a clean `AMD GPU N`. Each is covered by a regression test.
 
 ### Documentation
 - `docs/VALIDATION.md`: end-to-end real-hardware validation (AMD RX 7900 XT +
   Ollama on Windows). Device VRAM matches the registry/counter, the weights/KV
   split sums to Ollama's reported VRAM, and the KV cache grows exactly with context
   (matching the model's real GQA architecture).
+- Reframed the README "Road to 1.0" section as "Feature status" (feature-complete,
+  with NVIDIA and AMD-on-Linux implemented + fixture-tested and awaiting field
+  reports), and renamed VALIDATION.md's "Still to validate" to "Awaiting field
+  reports". Added an `amd-smi` fallback to the roadmap.
 
 ## [0.4.0] - 2026-07-05
 
@@ -113,7 +131,8 @@ First public release.
 - `demo` and `mock:PATH` data sources for hardware-free demos, tests, and CI.
 - Single static, dependency-free binary for Linux, macOS, and Windows.
 
-[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/RamazanKara/vramwatch/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/RamazanKara/vramwatch/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/RamazanKara/vramwatch/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/RamazanKara/vramwatch/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/RamazanKara/vramwatch/compare/v0.1.0...v0.2.0

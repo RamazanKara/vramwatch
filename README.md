@@ -28,7 +28,7 @@ vramwatch attributes VRAM inside the inference process and shows you the split
 live:
 
 ```text
-vramwatch v0.2.0
+vramwatch v0.5.0
 
 GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
 [███████████████████████████████████████████████]  23.75 GiB / 24.00 GiB used
@@ -172,7 +172,7 @@ Everything in the estimated rows is labelled `estimated` in the output. See the
 | GPU vendor | via                                   | device totals | per-process | notes |
 |------------|---------------------------------------|:---:|:---:|-------|
 | NVIDIA     | `nvidia-smi`                          | ✅ | ✅ | full support |
-| AMD (Linux)| `rocm-smi` + `/proc` fdinfo           | ✅ | ✅ | per-process via the DRM `fdinfo` interface |
+| AMD (Linux)| `rocm-smi` + `/proc` fdinfo           | ✅ | ✅ | device totals via `rocm-smi`, per-process via the DRM `fdinfo` interface; field reports welcome |
 | AMD (Windows)| registry + `typeperf` GPU counters  | ✅ | n/a | device totals; per-process is a roadmap item |
 
 On Windows, where AMD's consumer driver doesn't ship `rocm-smi`, vramwatch reads
@@ -214,37 +214,43 @@ vramwatch is deliberately honest about what it can and can’t know:
 - **Prediction is linear** in the KV cache and holds weights/overhead constant. It’s a
   good planning estimate, not a guarantee.
 
-**Roadmap:** allocator-level attribution, KV-dtype auto-detection, an Intel GPU
-provider (the `fdinfo` reader already handles i915), reliable AMD per-process on
-Windows, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
+**Roadmap:** allocator-level attribution, KV-dtype auto-detection, an `amd-smi`
+fallback (newer ROCm deprecates `rocm-smi` in favour of `amd-smi`, whose JSON has a
+different shape), an Intel GPU provider (the `fdinfo` reader already handles i915),
+reliable AMD per-process on Windows, partial-offload awareness, and vLLM / MLX /
+Apple-Metal providers.
 
-## Road to 1.0
+## Feature status
 
-vramwatch is `0.x` on purpose. The engine is well-tested against fixtures, but the
-tool is young and hasn't yet been validated across a broad range of real
-hardware, so the CLI and JSON shapes may still change. A `1.0` is earned, not
-declared; it means:
+vramwatch is feature-complete: every planned GPU vendor (NVIDIA, AMD) and loader
+(Ollama, llama.cpp) is implemented, and the whole attribution engine is covered by
+fixture tests. The tool is still `0.x` because the CLI and JSON shapes can change
+as field reports come in, but the capabilities themselves are shipped:
 
-- [~] Verified on real hardware. *Done:* AMD Radeon RX 7900 XT on Windows with
-      **Ollama**. Device total/used match the registry + GPU perf counter exactly,
+- [x] **AMD on Windows — validated on real hardware.** AMD Radeon RX 7900 XT with
+      **Ollama**: device total/used match the registry + GPU perf counter exactly,
       the weights/KV split sums to Ollama's reported VRAM, and the KV cache grew
       exactly 4× with 4× context (matching the model's real GQA arch). See
-      [docs/VALIDATION.md](docs/VALIDATION.md). *Still needed:* NVIDIA, AMD-on-Linux
-      (`rocm-smi`/`fdinfo`), several GPUs/drivers.
-- [x] Ollama (0.31.1) and llama.cpp (b9873, a real GGUF via Vulkan) both confirmed
-      on real hardware, agreeing on the same model's split via independent code paths
-      (`/api/show` vs. direct GGUF parsing). One more loader (vLLM) is still wanted.
-- [~] The `--json` schema and CLI held stable across a few releases. A golden test
-      now pins the exact `--json` output, so an accidental schema change fails CI;
-      the "stable across several releases + real-world use" part is time-based.
-- [~] The headline accuracy item, “estimated” becoming “measured.” *Progress:*
-      weights are now read from the model's GGUF file (both loaders) rather than
-      left as a `footprint − KV` remainder, and compute VRAM is separated out.
-      *Still open:* allocator-level attribution of the resident footprint, so the
-      whole split is measured rather than partly estimated.
+      [docs/VALIDATION.md](docs/VALIDATION.md).
+- [x] **Loaders — validated on real hardware.** Ollama (0.31.1) and llama.cpp
+      (b9873, a real GGUF via Vulkan) both confirmed on real hardware, agreeing on
+      the same model's split via independent code paths (`/api/show` vs. direct GGUF
+      parsing).
+- [x] **NVIDIA and AMD-on-Linux — implemented and fixture-tested.** The `nvidia-smi`
+      path and the `rocm-smi` + `/proc/<pid>/fdinfo` path are shipped and exercised
+      against captured fixtures; they haven't yet been run on native hardware here,
+      so field reports from those setups are especially welcome.
+- [x] **Stable machine-readable output.** A golden test pins the exact `--json`
+      output, so an accidental schema change fails CI.
+- [x] **Measured weights.** Weights are read from the model's GGUF file (both
+      loaders) rather than left as a `footprint − KV` remainder, and compute VRAM is
+      separated out. Allocator-level attribution of the remaining footprint is a
+      roadmap item.
 
-If you run it on your rig, [bug reports and hardware results](https://github.com/RamazanKara/vramwatch/issues)
-are the fastest way to get there.
+Run it on your rig and [hardware results and bug reports](https://github.com/RamazanKara/vramwatch/issues)
+are the most useful thing you can send — especially from NVIDIA and native
+Linux+AMD, where community field reports fill in for hardware we haven't run on
+ourselves yet.
 
 ## Docs
 

@@ -28,16 +28,43 @@ func (AMD) Sample(ctx context.Context) ([]model.GPU, error) {
 // parseROCm parses rocm-smi --json output. Values are strings; keys and their
 // spelling drift across ROCm versions, so lookups try several spellings.
 func parseROCm(jsonStr string) ([]model.GPU, error) {
-	var raw map[string]map[string]string
-	if err := json.Unmarshal([]byte(jsonStr), &raw); err != nil {
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(jsonStr), &doc); err != nil {
 		return nil, err
+	}
+	// rocm-smi groups output as {"card0": {...}, "system": {...}}. Decode each
+	// block leniently into a flat string map: a nested object/array value (ROCm
+	// 6/7 emit these, e.g. "GPU Metrics" or MI300 partition info) is skipped
+	// rather than making json.Unmarshal fail for the whole document and dropping
+	// every GPU. A bare number is coerced to its string form so a future numeric
+	// value still parses.
+	raw := make(map[string]map[string]string, len(doc))
+	for block, blob := range doc {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(blob, &fields); err != nil {
+			continue // block isn't an object (unexpected shape) — ignore it
+		}
+		m := make(map[string]string, len(fields))
+		for k, v := range fields {
+			var s string
+			if err := json.Unmarshal(v, &s); err == nil {
+				m[k] = s
+				continue
+			}
+			var num json.Number
+			if err := json.Unmarshal(v, &num); err == nil {
+				m[k] = num.String()
+			}
+		}
+		raw[block] = m
 	}
 	systemDriver := getFirst(raw["system"], "Driver version", "Driver Version")
 
-	// Stable ordering by card number.
+	// Stable ordering by card number. Only real card blocks (cardN) are GPUs;
+	// a sibling like "system" or a stray key is not.
 	var keys []string
 	for k := range raw {
-		if strings.HasPrefix(k, "card") {
+		if isCardKey(k) {
 			keys = append(keys, k)
 		}
 	}
@@ -48,7 +75,13 @@ func parseROCm(jsonStr string) ([]model.GPU, error) {
 		card := raw[k]
 		total := parseUint(getFirst(card, "VRAM Total Memory (B)", "VRAM Total Memory (b)", "vram_total"))
 		used := parseUint(getFirst(card, "VRAM Total Used Memory (B)", "VRAM Total Used Memory (b)", "vram_used"))
-		name := getFirst(card, "Card Series", "Card series", "Card Model", "Card model", "GPU ID")
+		if total == 0 {
+			continue // no meminfo: a masked/headless/failed-probe entry, not a usable GPU
+		}
+		// Name from a genuine product-name key only. "Card Model"/"GPU ID" are hex
+		// device ids (e.g. 0x744c), so they are NOT names — fall through to the
+		// clean "AMD GPU N" default instead of showing a hex id.
+		name := getFirst(card, "Card Series", "Card series", "card_series", "Market Name", "market_name", "Device Name", "device_name")
 		if name == "" {
 			name = "AMD GPU " + strconv.Itoa(cardNum(k))
 		}
@@ -85,6 +118,21 @@ func getFirst(m map[string]string, keys ...string) string {
 
 func cardNum(k string) int {
 	return atoiDefault(strings.TrimPrefix(k, "card"), 0)
+}
+
+// isCardKey reports whether a top-level rocm-smi key names a real GPU (cardN),
+// not a sibling block like "system" or some other stray key.
+func isCardKey(k string) bool {
+	rest := strings.TrimPrefix(k, "card")
+	if rest == k || rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func parseUint(s string) uint64 {
