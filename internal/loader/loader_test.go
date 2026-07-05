@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -283,6 +284,49 @@ func TestLlamaCppGGUFNoArch(t *testing.T) {
 	}
 	if ms[0].Arch.KnownForKV() {
 		t.Error("arch should be unknown for a GGUF without general.architecture")
+	}
+}
+
+func TestParseModelfileFrom(t *testing.T) {
+	// A pulled model's modelfile points FROM a local blob path.
+	mf := "# Modelfile\nFROM C:\\Users\\ramaz\\.ollama\\models\\blobs\\sha256-abc\nTEMPLATE \"...\"\n"
+	if got := parseModelfileFrom(mf); got != `C:\Users\ramaz\.ollama\models\blobs\sha256-abc` {
+		t.Errorf("windows blob path = %q", got)
+	}
+	if got := parseModelfileFrom("FROM /root/.ollama/models/blobs/sha256-def\n"); got != "/root/.ollama/models/blobs/sha256-def" {
+		t.Errorf("posix blob path = %q", got)
+	}
+	// A derived model references another model by name, not a path.
+	if got := parseModelfileFrom("FROM llama3:8b\nSYSTEM you are helpful\n"); got != "" {
+		t.Errorf("model reference should not be treated as a path, got %q", got)
+	}
+	if got := parseModelfileFrom(""); got != "" {
+		t.Errorf("empty modelfile = %q", got)
+	}
+}
+
+// Ollama weights should come from the GGUF blob's real size when it's readable.
+func TestOllamaMeasuredWeights(t *testing.T) {
+	blob := filepath.Join(t.TempDir(), "model.gguf")
+	if err := os.WriteFile(blob, make([]byte, 5*1024*1024), 0o644); err != nil { // 5 MiB "weights"
+		t.Fatal(err)
+	}
+	psJSON := `{"models":[{"name":"m","model":"m","size":8000000,"size_vram":8000000,"context_length":4096}]}`
+	showJSON := `{"model_info":` + llama3ModelInfo + `,"modelfile":"FROM ` + strings.ReplaceAll(blob, `\`, `\\`) + `\n"}`
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"version":"0.5"}`)) })
+	mux.HandleFunc("/api/ps", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(psJSON)) })
+	mux.HandleFunc("/api/show", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(showJSON)) })
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	ms, err := NewOllama(srv.URL).Models(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ms[0].WeightsBytes != 5*1024*1024 {
+		t.Errorf("weights should be the blob file size (5 MiB), got %d", ms[0].WeightsBytes)
 	}
 }
 

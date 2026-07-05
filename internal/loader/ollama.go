@@ -2,6 +2,7 @@ package loader
 
 import (
 	"context"
+	"os"
 	"path"
 	"strings"
 	"sync"
@@ -20,8 +21,9 @@ type Ollama struct {
 }
 
 type archInfo struct {
-	arch   model.Arch
-	ctxMax int
+	arch     model.Arch
+	ctxMax   int
+	blobPath string // local GGUF path from the modelfile, for a measured weight size
 }
 
 // NewOllama builds an Ollama provider. An empty base uses OLLAMA_HOST or the
@@ -57,6 +59,7 @@ type psModel struct {
 // showResponse is the subset of /api/show we consume.
 type showResponse struct {
 	ModelInfo map[string]any `json:"model_info"`
+	Modelfile string         `json:"modelfile"`
 }
 
 func (o *Ollama) Models(ctx context.Context) ([]model.LoaderModel, error) {
@@ -82,6 +85,14 @@ func (o *Ollama) Models(ctx context.Context) ([]model.LoaderModel, error) {
 			// configured default (Ollama's default is 4096) capped at trained max.
 			lm.ContextTokens = min(4096, ai.ctxMax)
 		}
+		// If the model's GGUF blob is readable on this host, use its real size as
+		// the weight figure instead of leaving weights as the footprint remainder.
+		// This separates compute/scratch VRAM from weights in the split.
+		if ai.blobPath != "" && isLocalURL(o.Base) {
+			if fi, err := os.Stat(ai.blobPath); err == nil && fi.Size() > 0 {
+				lm.WeightsBytes = uint64(fi.Size())
+			}
+		}
 		out = append(out, lm)
 	}
 	return out, nil
@@ -101,11 +112,30 @@ func (o *Ollama) arch(ctx context.Context, name string) archInfo {
 		return archInfo{}
 	}
 	ai := parseOllamaArch(show.ModelInfo)
+	ai.blobPath = parseModelfileFrom(show.Modelfile)
 
 	o.mu.Lock()
 	o.cache[name] = ai
 	o.mu.Unlock()
 	return ai
+}
+
+// parseModelfileFrom returns the FROM path of an Ollama modelfile when it points
+// at a local file (a pulled model's GGUF blob), and "" when FROM references
+// another model by name (a derived model) or is absent.
+func parseModelfileFrom(modelfile string) string {
+	for _, line := range strings.Split(modelfile, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToUpper(line), "FROM ") {
+			continue
+		}
+		v := strings.TrimSpace(line[len("FROM "):])
+		// A blob path contains a path separator; "FROM llama3:8b" does not.
+		if strings.ContainsAny(v, `/\`) {
+			return v
+		}
+	}
+	return ""
 }
 
 // parseOllamaArch extracts KV-relevant architecture from an Ollama model_info

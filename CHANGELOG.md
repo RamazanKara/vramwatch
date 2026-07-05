@@ -7,6 +7,11 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Measured weights for Ollama.** vramwatch now reads the model's GGUF blob (via
+  the path in `/api/show`) for a real weight size, instead of leaving weights as the
+  `footprint − KV` remainder. This separates compute/scratch VRAM from weights.
+  Validated on real hardware: qwen2.5:0.5b split as weights 379.4 MiB (the blob
+  size) + KV 48 MiB + compute 32.1 MiB, summing to Ollama's reported `size_vram`.
 - A golden test pins the `--json` snapshot schema, so an accidental change to the
   machine-readable output (a field added, removed, renamed, or reformatted) fails
   CI. Regenerate deliberately with `-update-golden`.

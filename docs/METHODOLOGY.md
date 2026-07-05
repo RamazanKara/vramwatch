@@ -87,9 +87,10 @@ Then:
 
 - **KV cache** is the loader-reported value if present, otherwise the formula
   estimate (labelled `estimated`).
-- **Weights** are loader-reported if present (they win any conflict with an
-  estimated KV), otherwise `footprint − KV` (Ollama) or the GGUF file size
-  (llama.cpp).
+- **Weights** come from the model's GGUF file size when vramwatch can read the
+  file: for llama.cpp via the path in `/props`, and for Ollama via the blob path in
+  the `/api/show` modelfile. That separates compute/scratch VRAM from weights. When
+  the file isn't readable, weights fall back to the remainder, `footprint − KV`.
 - **Compute** is whatever footprint remains after weights and KV.
 - **Other apps** is `device used − inference footprint`.
 - **Free** is `device total − device used`.
@@ -131,8 +132,8 @@ VRAM.
 | Device total / used / free | driver | measured |
 | Per-process VRAM (NVIDIA) | driver | measured |
 | KV cache | formula (`arch × ctx × dtype`) | estimated; exact at f16/bf16/f32, conservative (rounded up) for quantized |
-| Weights (Ollama) | `footprint − KV` | estimated |
-| Weights (llama.cpp) | GGUF file size | estimated (assumes full offload) |
+| Weights (GGUF readable) | GGUF file size | measured from the file (assumes full offload) |
+| Weights (GGUF not readable) | `footprint − KV` | estimated |
 | Compute overhead | footprint remainder | estimated |
 | Max context before OOM | `free ÷ KV/token` | estimated, linear |
 

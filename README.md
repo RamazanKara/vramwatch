@@ -237,8 +237,11 @@ declared; it means:
 - [~] The `--json` schema and CLI held stable across a few releases. A golden test
       now pins the exact `--json` output, so an accidental schema change fails CI;
       the "stable across several releases + real-world use" part is time-based.
-- [ ] The headline accuracy roadmap item landed (allocator-level or
-      cross-checked attribution, so “estimated” becomes “measured”).
+- [~] The headline accuracy item, “estimated” becoming “measured.” *Progress:*
+      weights are now read from the model's GGUF file (both loaders) rather than
+      left as a `footprint − KV` remainder, and compute VRAM is separated out.
+      *Still open:* allocator-level attribution of the resident footprint, so the
+      whole split is measured rather than partly estimated.
 
 If you run it on your rig, [bug reports and hardware results](https://github.com/RamazanKara/vramwatch/issues)
 are the fastest way to get there.

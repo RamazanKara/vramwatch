@@ -27,10 +27,12 @@ Total was 19.98 GiB, matching the registry `qwMemorySize` (`0x4ff000000`).
 ### Weights / KV split (Ollama loader + KV formula)
 
 With `qwen2.5:0.5b` resident on the GPU, Ollama's `/api/ps` reported
-`size_vram = 459 MB`. vramwatch split that footprint as:
+`size_vram = 459 MB`. vramwatch reads the model's GGUF blob (via the path in
+`/api/show`) for a measured weight size, and splits that footprint as:
 
-- weights **411.5 MiB** + KV cache **48 MiB** = **459.5 MiB ≈ 459 MB**. The split
-  sums to Ollama's own reported VRAM.
+- weights **379.4 MiB** (the real GGUF blob size) + KV cache **48 MiB** + compute
+  **32.1 MiB** = **459.5 MiB ≈ 459 MB**. The split sums to Ollama's own reported
+  VRAM, with the compute/scratch VRAM correctly separated from the weights.
 
 The KV figure matches the model's real architecture exactly. `/api/show` reports
 qwen2.5:0.5b as 24 layers, 2 KV heads (GQA), embedding 896 / 14 heads = 64 head_dim,
