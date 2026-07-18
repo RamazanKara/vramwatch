@@ -14,9 +14,10 @@ make build             # build ./vramwatch
 make demo              # live TUI against the synthetic demo source
 ```
 
-There are **no third-party dependencies** and there should stay none: the whole
-value proposition is a single static binary. Please keep `go.mod` free of
-`require` lines beyond the standard library.
+There are **no third-party Go dependencies** and there should stay none: the value
+proposition is one binary with no language runtime or package environment. Please
+keep `go.mod` free of `require` lines beyond the standard library. Native macOS
+builds link only Apple's system Foundation/Metal frameworks.
 
 ## Ground rules
 
@@ -27,14 +28,22 @@ value proposition is a single static binary. Please keep `go.mod` free of
   `internal/gpu/*_test.go` and `internal/loader/loader_test.go`.
 - Attribution must keep tiling the device exactly: the segments always sum to
   `gpu.TotalBytes`. `internal/engine` has tests that assert this.
-- Be honest in output. Anything derived rather than measured is marked
-  `estimated`. Don't present an estimate as ground truth.
+- Be honest in output. Set provenance explicitly: `measured`, `loader_reported`,
+  `model_estimated`, `assumed`, or `user_supplied`. Don't present a derived value
+  as ground truth.
+- Fit must fail closed. Unknown artifact size, incomplete architecture/shards, or
+  arithmetic overflow may not degrade to a smaller optimistic prediction.
+- Shareable SVGs may not gain hostnames, paths, URL queries, PIDs, bus IDs, or
+  hardware serials. Add a privacy regression test for any new field.
 
 ## Adding a GPU provider
 
 Implement `gpu.Provider` (`Name`, `Vendor`, `Available`, `Sample`) and register
 it in `gpu.All()`. Keep the actual command execution thin and put the parsing in
-a tested pure function.
+a tested pure function. Set `CapacitySource` and `UsageSource`; if usage cannot
+be queried, use `ProvenanceAssumed` so `fit` reports current availability as
+unknown. Apple platform providers also require native macOS CI coverage because
+the shipped implementation uses cgo and system frameworks.
 
 ## Adding a loader provider
 
@@ -44,9 +53,21 @@ fill `model.Arch` so the engine can compute the weights/KV split. When your
 loader exposes a GGUF file path, `internal/gguf.Read` gives you the architecture
 and weight size for free; see the llama.cpp provider for the pattern.
 
-Set `WeightsBytes`/`VRAMBytes` to whatever the loader measures; leave
+Set `VRAMBytes` only when the loader exposes a resident footprint, and identify it
+with `VRAMSource`. An exact GGUF file size may populate `WeightsBytes`, but GPU
+residency still needs `Estimated: true` because partial offload is possible. Leave
 `KVCacheBytes` at zero to let the engine estimate it from the architecture (which
-also lets `--kv-cache-type` apply). Mark derived figures with `Estimated: true`.
+also lets `--kv-cache-type` apply). Populate `Quantization`, `Digest`, and
+`ArtifactPath` when available; the ledger uses them to avoid pairing a prediction
+with the wrong resident model.
+
+## Changing preflight prediction
+
+The public policy is versioned as `conservative-v1` in `internal/fit`. A policy
+change must update the version, methodology, JSON fixtures, and tests for
+fits-on-device, fits-now, unknown current usage, unsupported context, and overflow.
+Remote resolver tests use a custom HTTP transport and must continue proving that
+only metadata plus a bounded range is read.
 
 ## Commit / PR
 

@@ -367,3 +367,33 @@ func TestBuildDeterministic(t *testing.T) {
 		t.Errorf("timestamp not injected")
 	}
 }
+
+func TestUnifiedMemoryUsesResidentFootprintAsMeasuredProxyFloor(t *testing.T) {
+	gpu := model.GPU{
+		Index: 0, Name: "Apple M4", Vendor: model.VendorApple,
+		TotalBytes: 16 * model.GiB, FreeBytes: 16 * model.GiB,
+		MemoryKind: model.MemoryUnified, CapacitySource: model.ProvenanceMeasured, UsageSource: model.ProvenanceMeasured,
+	}
+	m := model.LoaderModel{
+		Loader: "ollama", Name: "model", GPUIndex: 0, VRAMBytes: 4 * model.GiB,
+		VRAMSource: model.ProvenanceReported, ContextTokens: 4096,
+		Arch: model.Arch{Layers: 16, KVHeads: 4, HeadDim: 64, KVTypeBits: 16},
+	}
+	snap := Build([]model.GPU{gpu}, []model.LoaderModel{m}, Options{Version: "test"})
+	bd := snap.Breakdowns[0]
+	if bd.GPU.UsedBytes != 4*model.GiB || bd.GPU.FreeBytes != 12*model.GiB {
+		t.Fatalf("unified-memory floor = used %s free %s", model.HumanBytes(bd.GPU.UsedBytes), model.HumanBytes(bd.GPU.FreeBytes))
+	}
+	if bd.GPU.UsageSource != model.ProvenanceEstimated {
+		t.Fatalf("adjusted unified usage provenance = %q", bd.GPU.UsageSource)
+	}
+	if weights, ok := bd.Segment(model.KindWeights); !ok || weights.Bytes == 0 {
+		t.Fatalf("resident model disappeared from unified-memory attribution: %+v", bd.Segments)
+	}
+	if free, ok := bd.Segment(model.KindFree); !ok || free.Provenance != model.ProvenanceEstimated {
+		t.Fatalf("adjusted free-memory provenance = %+v", free)
+	}
+	if len(bd.Warnings) == 0 {
+		t.Error("unified-memory proxy adjustment should be disclosed")
+	}
+}

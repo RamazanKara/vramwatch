@@ -12,7 +12,6 @@ import (
 
 	"github.com/RamazanKara/vramwatch/internal/engine"
 	"github.com/RamazanKara/vramwatch/internal/model"
-	"github.com/RamazanKara/vramwatch/internal/render"
 	"github.com/RamazanKara/vramwatch/internal/source"
 )
 
@@ -22,6 +21,21 @@ type usageError struct{ err error }
 
 func (e *usageError) Error() string { return e.err.Error() }
 func (e *usageError) Unwrap() error { return e.err }
+
+// exitError lets a command return a meaningful non-zero result after it has
+// already printed a valid report (for example, fit determined "does not fit").
+type exitError struct {
+	code  int
+	err   error
+	quiet bool
+}
+
+func (e *exitError) Error() string {
+	if e.err != nil {
+		return e.err.Error()
+	}
+	return "command failed"
+}
 
 // parseFlags parses a subcommand's flags, mapping flag package outcomes onto
 // our error convention: flag.ErrHelp propagates (main exits 0), any other parse
@@ -121,13 +135,8 @@ func resolveKVBits(flagVal string) (int, error) {
 	}
 }
 
-// renderConsole prints the standard console table.
-func renderConsole(snap model.Snapshot, color bool) {
-	os.Stdout.WriteString(render.Table(snap, render.Options{Color: color}))
-}
-
 // Small colour + formatting helpers for the ad-hoc command output (the table
-// renderer has its own; these are for predict/devices).
+// renderer has its own; these are for fit/doctor/report).
 func csi(color bool, params, s string) string {
 	if !color || params == "" {
 		return s
@@ -158,4 +167,25 @@ func commas(n int) string {
 		return "-" + string(b)
 	}
 	return string(b)
+}
+
+func saturatingBytes(a, b uint64) uint64 {
+	if ^uint64(0)-a < b {
+		return ^uint64(0)
+	}
+	return a + b
+}
+
+// loaderVRAMProvenance preserves the distinction between a loader-reported
+// footprint and one derived from model metadata. Empty is treated as reported
+// for compatibility with older provider fixtures whose VRAMBytes contract was
+// loader ground truth.
+func loaderVRAMProvenance(m model.LoaderModel) model.Provenance {
+	if m.VRAMSource != "" {
+		return m.VRAMSource
+	}
+	if m.VRAMBytes > 0 {
+		return model.ProvenanceReported
+	}
+	return ""
 }

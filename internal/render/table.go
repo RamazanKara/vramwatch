@@ -69,7 +69,7 @@ func Table(snap model.Snapshot, opts Options) string {
 func renderBreakdown(b *strings.Builder, bd model.Breakdown, opts Options) {
 	g := bd.GPU
 	title := fmt.Sprintf("GPU %d  %s", g.Index, g.Name)
-	sub := string(g.Vendor)
+	sub := string(g.Vendor) + ", " + memoryKindName(g.MemoryKind)
 	if g.Driver != "" {
 		sub += ", driver " + g.Driver
 	}
@@ -94,8 +94,8 @@ func renderBreakdown(b *strings.Builder, bd model.Breakdown, opts Options) {
 		bar.WriteString(sgr(opts.Color, st.ansi, run))
 	}
 	used := bd.Used()
-	fmt.Fprintf(b, "[%s]  %s / %s used\n", bar.String(),
-		model.HumanBytes(used), model.HumanBytes(g.TotalBytes))
+	fmt.Fprintf(b, "[%s]  %s %s used / %s %s capacity\n", bar.String(), provenanceCode(g.UsageSource),
+		model.HumanBytes(used), provenanceCode(g.CapacitySource), model.HumanBytes(g.TotalBytes))
 
 	// Legend.
 	for _, s := range segs {
@@ -111,12 +111,13 @@ func renderBreakdown(b *strings.Builder, bd model.Breakdown, opts Options) {
 			}
 			note += "estimated"
 		}
-		line := fmt.Sprintf("  %s %-11s %10s  %5.1f%%", swatch, s.Label, model.HumanBytes(s.Bytes), pct(s.Bytes, g.TotalBytes))
+		line := fmt.Sprintf("  %s %s %-11s %10s  %5.1f%%", swatch, provenanceBadge(s), s.Label, model.HumanBytes(s.Bytes), pct(s.Bytes, g.TotalBytes))
 		if note != "" {
 			line += "  " + dim(opts.Color, "("+note+")")
 		}
 		b.WriteString(line + "\n")
 	}
+	b.WriteString(dim(opts.Color, "  [M] measured  [R] loader-reported  [E] model-estimated  [A] assumed\n"))
 
 	// Models.
 	for _, m := range bd.Models {
@@ -131,13 +132,13 @@ func renderBreakdown(b *strings.Builder, bd model.Breakdown, opts Options) {
 		if ctx != "" {
 			parts = append(parts, ctx)
 		}
-		fmt.Fprintf(b, "  %s %s\n", dim(opts.Color, "model:"), strings.Join(parts, "  "))
+		fmt.Fprintf(b, "  %s %s\n", dim(opts.Color, "[R] model:"), strings.Join(parts, "  "))
 	}
 
 	// Prediction.
 	if p := bd.Prediction; p != nil {
-		msg := fmt.Sprintf("headroom %s • ~%s/token • max context ≈ %s tokens",
-			model.HumanBytes(p.HeadroomBytes), model.HumanBytes(p.KVBytesPerToken), formatInt(p.MaxContextFits))
+		msg := fmt.Sprintf("%s headroom %s • [E] ~%s/token • max context ≈ %s tokens",
+			provenanceCode(g.UsageSource), model.HumanBytes(p.HeadroomBytes), model.HumanBytes(p.KVBytesPerToken), formatInt(p.MaxContextFits))
 		if p.OOMRisk {
 			fmt.Fprintf(b, "  %s %s\n", redSGR(opts.Color, "⚠ OOM risk:"), msg)
 		} else {
@@ -148,6 +149,35 @@ func renderBreakdown(b *strings.Builder, bd model.Breakdown, opts Options) {
 	// Warnings.
 	for _, w := range bd.Warnings {
 		fmt.Fprintf(b, "  %s %s\n", dim(opts.Color, "note:"), w)
+	}
+}
+
+func provenanceBadge(s model.Segment) string {
+	p := s.Provenance
+	if p == "" {
+		if s.Estimated {
+			p = model.ProvenanceEstimated
+		} else if s.Source == "driver" {
+			p = model.ProvenanceMeasured
+		} else {
+			p = model.ProvenanceReported
+		}
+	}
+	return provenanceCode(p)
+}
+
+func provenanceCode(p model.Provenance) string {
+	switch p {
+	case model.ProvenanceMeasured:
+		return "[M]"
+	case model.ProvenanceReported:
+		return "[R]"
+	case model.ProvenanceAssumed:
+		return "[A]"
+	case model.ProvenanceUser:
+		return "[U]"
+	default:
+		return "[E]"
 	}
 }
 

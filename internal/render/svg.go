@@ -29,6 +29,7 @@ func SVG(snap model.Snapshot) string {
 		y += 30                            // title
 		y += svgBarH + 18                  // bar
 		y += len(orderedSegments(bd)) * 22 // legend
+		y += 20                            // provenance key
 		if bd.Prediction != nil {
 			y += 26
 		}
@@ -105,10 +106,7 @@ func renderSVGBreakdown(b *strings.Builder, bd model.Breakdown, idx, y int) int 
 	for _, s := range segs {
 		st := styleFor(s.Kind)
 		fmt.Fprintf(b, `<rect x="%d" y="%d" width="12" height="12" rx="2" fill="%s"/>`, svgPadding, y-11, st.hex)
-		label := s.Label
-		if s.Estimated {
-			label += " (est.)"
-		}
+		label := provenanceBadge(s) + " " + s.Label
 		fmt.Fprintf(b, `<text x="%d" y="%d" font-size="13" fill="%s">%s</text>`, svgPadding+20, y, svgFG, escapeXML(label))
 		fmt.Fprintf(b, `<text x="%d" y="%d" text-anchor="end" font-size="13" fill="%s">%s</text>`,
 			svgPadding+300, y, svgFG, model.HumanBytes(s.Bytes))
@@ -116,6 +114,9 @@ func renderSVGBreakdown(b *strings.Builder, bd model.Breakdown, idx, y int) int 
 			svgPadding+380, y, svgMuted, pct(s.Bytes, g.TotalBytes))
 		y += 22
 	}
+	fmt.Fprintf(b, `<text x="%d" y="%d" font-size="11" fill="%s">[M] measured · [R] loader-reported · [E] model-estimated · [A] assumed</text>`,
+		svgPadding, y, svgMuted)
+	y += 20
 
 	// Prediction.
 	if p := bd.Prediction; p != nil {

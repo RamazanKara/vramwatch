@@ -1,13 +1,26 @@
 # Security Policy
 
-vramwatch is a read-only local tool: it shells out to `nvidia-smi`/`amd-smi`
-and makes HTTP requests to inference servers on loopback. It does not write to
-your GPU, take any destructive action, or send data off your machine.
+vramwatch does not write to the GPU or control a loader. Live observation shells
+out to `nvidia-smi`/`amd-smi`, reads OS counters, and calls configured loader APIs.
+It writes only prediction-ledger records and report files requested by the user.
+
+Remote `fit` requests contact the selected Hugging Face or Ollama registry (or an
+explicit HTTPS GGUF URL) for metadata. GGUF range reads and JSON responses share a
+16 MiB limit, range bodies are closed as soon as architecture parsing completes,
+unknown sizes fail closed, and parser counts/depths are bounded.
+`doctor --online` also makes explicit registry probes. There is no telemetry.
+
+`HF_TOKEN` is used as an authorization header for Hugging Face metadata and is not
+printed or placed in SVG output. Local ledger records and raw JSON can retain the
+original model reference, so treat the state directory as private diagnostic data.
+The shareable SVG path is separately scrubbed of local paths, URL queries, host
+identity, PIDs, bus addresses, and serial-number fields.
 
 ## Reporting a vulnerability
 
-If you find a security issue (e.g. a way to make vramwatch execute something
-unexpected via crafted `nvidia-smi`/loader output), please report it privately:
+If you find a security issue (for example command execution through crafted
+provider output, a GGUF parser resource bypass, ledger path traversal, token
+disclosure, or private data in an SVG), please report it privately:
 
 - Use GitHub's **"Report a vulnerability"** (Security → Advisories) on this repo, or
 - email the maintainer listed on the GitHub profile.

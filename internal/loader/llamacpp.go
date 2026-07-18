@@ -49,7 +49,9 @@ func (l *LlamaCpp) Models(ctx context.Context) ([]model.LoaderModel, error) {
 	if props.ModelPath != "" && isLocalURL(l.Base) {
 		if info, err := gguf.Read(props.ModelPath); err == nil {
 			for i := range models {
+				models[i].ArtifactPath = props.ModelPath
 				models[i].WeightsBytes = info.FileSize // ≈ weights (assumes full GPU offload)
+				models[i].Quantization = info.Quantization()
 				if info.ContextLength > 0 {
 					models[i].ContextMax = info.ContextLength
 				}
@@ -85,5 +87,6 @@ func parseLlamaProps(props propsResponse) []model.LoaderModel {
 		GPUIndex:      -1,
 		ContextTokens: props.DefaultGenerationSettings.NCtx,
 		Estimated:     true,
+		VRAMSource:    model.ProvenanceEstimated,
 	}}
 }

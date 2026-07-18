@@ -24,8 +24,9 @@ type Options struct {
 	Now          time.Time // injectable for deterministic output; zero => time.Now()
 	OOMThreshold uint64    // 0 => DefaultOOMThreshold
 	// KVBits overrides the KV-cache element size (in bits) for every model, so a
-	// quantized cache (q8_0=8, q4_0=4) is estimated correctly instead of the
-	// f16 default. 0 leaves each model's own value untouched.
+	// quantized cache (q8_0 conservatively 9, q4_0 conservatively 5) is
+	// estimated correctly instead of the f16 default. 0 leaves each model's own
+	// value untouched.
 	KVBits int
 }
 
@@ -50,22 +51,36 @@ func (o Options) oomThreshold() uint64 {
 // KVBytesPerToken returns the number of VRAM bytes one additional context
 // token adds to the KV cache for a model with the given architecture.
 //
-// The standard formula is:
+// The formula is:
 //
-//	2 (one K tensor + one V tensor)
+//	(key_dim + value_dim)
 //	  * n_layers
 //	  * n_kv_heads      (grouped-query / multi-query aware)
-//	  * head_dim
 //	  * bytes_per_element
 //
 // KVTypeBits is used in bit units so quantized caches (e.g. q8_0 = 8 bits)
-// are handled exactly. Returns 0 when the architecture is unknown.
+// use a conservative integer width. Returns 0 when the architecture is unknown.
 func KVBytesPerToken(a model.Arch) uint64 {
 	if !a.KnownForKV() {
 		return 0
 	}
-	bits := uint64(2) * uint64(a.Layers) * uint64(a.KVHeads) * uint64(a.HeadDim) * uint64(a.KVTypeBits)
-	return bits / 8
+	valueDim := a.ValueDim
+	if valueDim == 0 {
+		valueDim = a.HeadDim
+	}
+	headWidth := saturatingAdd(uint64(a.HeadDim), uint64(valueDim))
+	bits := uint64(a.Layers)
+	for _, factor := range []uint64{uint64(a.KVHeads), headWidth, uint64(a.KVTypeBits)} {
+		bits = saturatingMul(bits, factor)
+	}
+	if bits == ^uint64(0) {
+		return bits
+	}
+	bytes := bits / 8
+	if bits%8 != 0 {
+		bytes++
+	}
+	return bytes
 }
 
 // KVCacheBytes returns the total KV cache size for a model at ctxTokens.
@@ -73,7 +88,25 @@ func KVCacheBytes(a model.Arch, ctxTokens int) uint64 {
 	if ctxTokens <= 0 {
 		return 0
 	}
-	return KVBytesPerToken(a) * uint64(ctxTokens)
+	return saturatingMul(KVBytesPerToken(a), uint64(ctxTokens))
+}
+
+func saturatingAdd(a, b uint64) uint64 {
+	c := a + b
+	if c < a {
+		return ^uint64(0)
+	}
+	return c
+}
+
+func saturatingMul(a, b uint64) uint64 {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	if a > ^uint64(0)/b {
+		return ^uint64(0)
+	}
+	return a * b
 }
 
 // modelKV resolves a model's KV-cache bytes, preferring a loader-reported value
@@ -94,13 +127,18 @@ func modelKV(m model.LoaderModel) (kv uint64, reported bool) {
 // estimated KV never claims the whole footprint, since weights are always
 // resident too.
 func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, []string) {
+	segs, warnings, _ := attributeGPU(gpu, models)
+	return segs, warnings
+}
+
+func attributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, []string, model.GPU) {
 	var warnings []string
 
 	total := gpu.TotalBytes
 	used := gpu.UsedBytes
 	if total == 0 {
 		// Nothing sensible to attribute; surface a single unknown block.
-		return []model.Segment{{Kind: model.KindFree, Label: "unknown", Bytes: 0, Source: string(gpu.Vendor)}}, warnings
+		return []model.Segment{{Kind: model.KindFree, Label: "unknown", Bytes: 0, Source: string(gpu.Vendor)}}, warnings, gpu
 	}
 	if used > total {
 		used = total
@@ -108,18 +146,19 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 
 	// Aggregate reported weights and KV (reported-or-estimated) across models.
 	var reportedWeights, kvBytes, sumModelVRAM uint64
-	weightsReported, kvReported, anyModelEstimated := false, false, false
+	weightsReported, anyModelEstimated := false, false
+	kvReported := len(models) > 0
 	for _, m := range models {
 		if m.WeightsBytes > 0 {
-			reportedWeights += m.WeightsBytes
+			reportedWeights = saturatingAdd(reportedWeights, m.WeightsBytes)
 			weightsReported = true
 		}
 		kv, rep := modelKV(m)
-		kvBytes += kv
-		if rep {
-			kvReported = true
+		kvBytes = saturatingAdd(kvBytes, kv)
+		if !rep {
+			kvReported = false
 		}
-		sumModelVRAM += m.VRAMBytes
+		sumModelVRAM = saturatingAdd(sumModelVRAM, m.VRAMBytes)
 		if m.Estimated {
 			anyModelEstimated = true // e.g. weights derived from a GGUF file size
 		}
@@ -137,7 +176,27 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 		infProc = sumModelVRAM
 	}
 	if infProc == 0 {
-		infProc = reportedWeights + kvBytes
+		infProc = saturatingAdd(reportedWeights, kvBytes)
+	}
+	usageProv := gpu.UsageSource
+	if usageProv == "" {
+		usageProv = model.ProvenanceMeasured
+	}
+	if infProc > used {
+		if usageProv == model.ProvenanceAssumed || gpu.MemoryKind == model.MemoryUnified {
+			used = infProc
+			if used > total {
+				used = total
+			}
+			usageProv = model.ProvenanceEstimated
+			if gpu.MemoryKind == model.MemoryUnified {
+				warnings = append(warnings, "unified-memory availability is a system-pressure proxy; used/free memory is floored by the resident model footprint")
+			} else {
+				warnings = append(warnings, "device usage is unavailable; used/free memory is inferred from the resident model")
+			}
+		} else {
+			infProc = used
+		}
 	}
 	if infProc > used {
 		infProc = used
@@ -153,7 +212,7 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 		if weights > infProc {
 			weights = infProc
 		}
-		if weights+kv > infProc {
+		if kv > infProc-weights {
 			kv = infProc - weights
 		}
 	} else {
@@ -179,19 +238,31 @@ func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, [
 	loaderSrc := loaderSource(models)
 	segs := make([]model.Segment, 0, 5)
 	if weights > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindWeights, Label: model.KindWeights.DefaultLabel(), Bytes: weights, Source: loaderSrc, Estimated: weightsEstimated || anyModelEstimated})
+		estimated := weightsEstimated || anyModelEstimated
+		prov := model.ProvenanceReported
+		if estimated {
+			prov = model.ProvenanceEstimated
+		}
+		segs = append(segs, model.Segment{Kind: model.KindWeights, Label: model.KindWeights.DefaultLabel(), Bytes: weights, Source: loaderSrc, Estimated: estimated, Provenance: prov})
 	}
 	if kv > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindKVCache, Label: model.KindKVCache.DefaultLabel(), Bytes: kv, Source: loaderSrc, Estimated: !kvReported})
+		prov := model.ProvenanceReported
+		if !kvReported {
+			prov = model.ProvenanceEstimated
+		}
+		segs = append(segs, model.Segment{Kind: model.KindKVCache, Label: model.KindKVCache.DefaultLabel(), Bytes: kv, Source: loaderSrc, Estimated: !kvReported, Provenance: prov})
 	}
 	if compute > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindCompute, Label: model.KindCompute.DefaultLabel(), Bytes: compute, Source: "driver"})
+		segs = append(segs, model.Segment{Kind: model.KindCompute, Label: model.KindCompute.DefaultLabel(), Bytes: compute, Source: "footprint remainder", Estimated: true, Provenance: model.ProvenanceEstimated})
 	}
 	if other > 0 {
-		segs = append(segs, model.Segment{Kind: model.KindOtherProcess, Label: model.KindOtherProcess.DefaultLabel(), Bytes: other, Source: "driver"})
+		segs = append(segs, model.Segment{Kind: model.KindOtherProcess, Label: model.KindOtherProcess.DefaultLabel(), Bytes: other, Source: "device minus model", Estimated: true, Provenance: model.ProvenanceEstimated})
 	}
-	segs = append(segs, model.Segment{Kind: model.KindFree, Label: model.KindFree.DefaultLabel(), Bytes: free, Source: "driver"})
-	return segs, warnings
+	segs = append(segs, model.Segment{Kind: model.KindFree, Label: model.KindFree.DefaultLabel(), Bytes: free, Source: "driver", Provenance: usageProv})
+	gpu.UsedBytes = used
+	gpu.FreeBytes = free
+	gpu.UsageSource = usageProv
+	return segs, warnings, gpu
 }
 
 // procUsedFor returns the driver-measured VRAM of the inference process on this
@@ -214,7 +285,7 @@ func procUsedFor(gpu model.GPU, models []model.LoaderModel) uint64 {
 		var sum uint64
 		for _, p := range gpu.Procs {
 			if pids[p.PID] {
-				sum += p.UsedBytes
+				sum = saturatingAdd(sum, p.UsedBytes)
 			}
 		}
 		if sum > 0 {
@@ -292,7 +363,15 @@ func Predict(gpu model.GPU, models []model.LoaderModel, oomThreshold uint64) *mo
 	if additional > maxPredictTokens {
 		additional = maxPredictTokens // guard the uint64->int narrowing below
 	}
-	maxFits := m.ContextTokens + int(additional)
+	current := m.ContextTokens
+	if current < 0 {
+		current = 0
+	}
+	maxInt := int(^uint(0) >> 1)
+	maxFits := maxInt
+	if additional <= uint64(maxInt-current) {
+		maxFits = current + int(additional)
+	}
 	if m.ContextMax > 0 && maxFits > m.ContextMax {
 		maxFits = m.ContextMax
 	}
@@ -325,6 +404,9 @@ type ContextFit struct {
 // KV cache. Leaves a 2% device slack. Returns false, ok=false if no
 // KV-known model is loaded.
 func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (ContextFit, bool) {
+	if targetCtx < 0 {
+		return ContextFit{}, false
+	}
 	m, ok := primaryModel(models)
 	if !ok {
 		return ContextFit{}, false
@@ -341,14 +423,14 @@ func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (C
 		footprint = pu
 	}
 	if footprint == 0 {
-		footprint = m.WeightsBytes + curKV // e.g. llama.cpp: weights from GGUF + KV
+		footprint = saturatingAdd(m.WeightsBytes, curKV) // e.g. llama.cpp: weights from GGUF + KV
 	}
 	var base uint64
 	if footprint > curKV {
 		base = footprint - curKV
 	}
-	kvTarget := kvPerTok * uint64(targetCtx)
-	needed := base + kvTarget
+	kvTarget := saturatingMul(kvPerTok, uint64(targetCtx))
+	needed := saturatingAdd(base, kvTarget)
 	budget := gpu.TotalBytes - gpu.TotalBytes/50 // 98% of total
 	return ContextFit{
 		Model:           m.Name,
@@ -364,8 +446,8 @@ func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (C
 
 // primaryModel returns the largest-VRAM resident model whose architecture is
 // known well enough to compute a KV cache. That is the model predictions and
-// fit checks are about. A bigger model with an unknown architecture is skipped in favour
-// of a smaller, fully-known one rather than giving up entirely.
+// fit checks are about. A bigger model with an unknown architecture is skipped
+// in favour of a smaller, fully-known one rather than giving up entirely.
 func primaryModel(models []model.LoaderModel) (model.LoaderModel, bool) {
 	var best model.LoaderModel
 	found := false
@@ -397,8 +479,21 @@ func Build(gpus []model.GPU, models []model.LoaderModel, opts Options) model.Sna
 		models = withKVBits(models, opts.KVBits)
 	}
 	for _, g := range gpus {
+		if g.MemoryKind == "" {
+			g.MemoryKind = model.MemoryDedicated
+		}
+		if g.BudgetBytes == 0 {
+			g.BudgetBytes = g.TotalBytes
+		}
+		if g.CapacitySource == "" {
+			g.CapacitySource = model.ProvenanceMeasured
+		}
+		if g.UsageSource == "" {
+			g.UsageSource = model.ProvenanceMeasured
+		}
 		devModels := modelsForDevice(g, gpus, models)
-		segs, warns := AttributeGPU(g, devModels)
+		segs, warns, attributedGPU := attributeGPU(g, devModels)
+		g = attributedGPU
 		b := model.Breakdown{
 			GPU:        g,
 			Segments:   segs,

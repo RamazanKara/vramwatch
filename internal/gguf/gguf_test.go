@@ -87,9 +87,21 @@ func TestReadGGUF(t *testing.T) {
 		t.Error("FileSize should be set")
 	}
 	arch := info.ToArch()
-	want := model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16}
+	want := model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, ValueDim: 128, KVTypeBits: 16}
 	if arch != want {
 		t.Errorf("ToArch = %+v, want %+v", arch, want)
+	}
+}
+
+func TestQuantizationUsesLlamaFileType(t *testing.T) {
+	cases := map[int]string{0: "F32", 7: "Q8_0", 8: "Q5_0", 15: "Q4_K_M", 32: "BF16", 41: "Q2_0", 999: ""}
+	for fileType, want := range cases {
+		if got := (Info{FileType: fileType, FileTypeKnown: true}).Quantization(); got != want {
+			t.Errorf("file type %d = %q, want %q", fileType, got, want)
+		}
+	}
+	if got := (Info{}).Quantization(); got != "" {
+		t.Errorf("missing file type = %q, want unknown", got)
 	}
 }
 
@@ -110,6 +122,59 @@ func TestReadGGUFHeadCountKVFallback(t *testing.T) {
 	}
 	if info.HeadDim() != 64 { // 768 / 12
 		t.Errorf("HeadDim = %d, want 64", info.HeadDim())
+	}
+}
+
+func TestReadPrefixWaitsForLateKVMetadata(t *testing.T) {
+	var body bytes.Buffer
+	kvStr(&body, "general.architecture", "llama")
+	kvU32(&body, "general.file_type", 15)
+	kvU32(&body, "llama.block_count", 28)
+	kvU32(&body, "llama.attention.head_count", 24)
+	kvU32(&body, "llama.attention.key_length", 128)
+	kvU32(&body, "llama.context_length", 131072) // core fields arrive first
+	kvU32(&body, "llama.attention.head_count_kv", 8)
+	kvU32(&body, "llama.attention.value_length", 64)
+	kvStrArray(&body, "tokenizer.ggml.tokens", []string{"large", "array"})
+	var hdr bytes.Buffer
+	hdr.WriteString("GGUF")
+	wU32(&hdr, 3)
+	wU64(&hdr, 0)
+	wU64(&hdr, 9)
+	hdr.Write(body.Bytes())
+
+	info, err := ReadPrefix(hdr.Bytes(), 2*model.GiB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HeadCountKV != 8 || info.ValueLength != 64 {
+		t.Fatalf("late KV metadata was lost: %+v", info)
+	}
+}
+
+func TestReadPrefixStopsBeforeTokenizerArrayForMHA(t *testing.T) {
+	var body bytes.Buffer
+	kvStr(&body, "general.architecture", "gpt2")
+	kvU32(&body, "gpt2.block_count", 12)
+	kvU32(&body, "gpt2.attention.head_count", 12)
+	kvU32(&body, "gpt2.embedding_length", 768)
+	// Deliberately omit the array payload. A bounded remote parser should stop at
+	// this boundary and use the conservative MHA/value-dimension fallbacks.
+	wStr(&body, "tokenizer.ggml.tokens")
+	wU32(&body, 9)
+	var hdr bytes.Buffer
+	hdr.WriteString("GGUF")
+	wU32(&hdr, 3)
+	wU64(&hdr, 0)
+	wU64(&hdr, 5)
+	hdr.Write(body.Bytes())
+
+	info, err := ReadPrefix(hdr.Bytes(), model.GiB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.HeadCountKV != 12 || info.HeadDim() != 64 || info.ValueLength != 0 {
+		t.Fatalf("MHA fallback = %+v", info)
 	}
 }
 

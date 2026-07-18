@@ -7,37 +7,60 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    strategy:
+      matrix:
+        include:
+          - { runner: ubuntu-latest, goos: linux, goarch: amd64, cgo: "0", archive: tar }
+          - { runner: ubuntu-latest, goos: linux, goarch: arm64, cgo: "0", archive: tar }
+          - { runner: ubuntu-latest, goos: windows, goarch: amd64, cgo: "0", archive: zip }
+          - { runner: macos-15-intel, goos: darwin, goarch: amd64, cgo: "1", archive: tar }
+          - { runner: macos-15, goos: darwin, goarch: arm64, cgo: "1", archive: tar }
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
 
-      - name: build release artifacts
+      - name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: ${{ matrix.cgo }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
+          STAGE="$(mktemp -d)"
+          BIN="vramwatch"
+          if [ "${GOOS}" = "windows" ]; then BIN="vramwatch.exe"; fi
+          go build -trimpath -ldflags "-s -w -X main.Version=${VERSION}" -o "${STAGE}/${BIN}" ./cmd/vramwatch
+          cp README.md LICENSE "${STAGE}/"
           mkdir -p dist
-          targets="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64"
-          for t in $targets; do
-            os="${t%/*}"; arch="${t#*/}"
-            bin="vramwatch"; [ "$os" = "windows" ] && bin="vramwatch.exe"
-            echo "building $os/$arch"
-            GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 \
-              go build -ldflags "-s -w -X main.Version=${VERSION}" -o "$bin" ./cmd/vramwatch
-            name="vramwatch_${VERSION}_${os}_${arch}"
-            if [ "$os" = "windows" ]; then
-              zip -q "dist/${name}.zip" "$bin" README.md LICENSE
-            else
-              tar czf "dist/${name}.tar.gz" "$bin" README.md LICENSE
-            fi
-            rm -f "$bin"
-          done
-          (cd dist && sha256sum * > checksums.txt)
-          ls -l dist
+          NAME="vramwatch_${VERSION}_${GOOS}_${GOARCH}"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            (cd "${STAGE}" && zip -q "${GITHUB_WORKSPACE}/dist/${NAME}.zip" "${BIN}" README.md LICENSE)
+          else
+            tar -C "${STAGE}" -czf "dist/${NAME}.tar.gz" "${BIN}" README.md LICENSE
+          fi
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vramwatch-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: create checksums
+        run: (cd dist && sha256sum * > checksums.txt)
       - name: create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

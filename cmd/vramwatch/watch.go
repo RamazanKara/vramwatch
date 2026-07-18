@@ -4,11 +4,14 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"math"
 	"os"
 	"os/signal"
 	"time"
 
 	"github.com/RamazanKara/vramwatch/internal/engine"
+	"github.com/RamazanKara/vramwatch/internal/ledger"
+	"github.com/RamazanKara/vramwatch/internal/model"
 	"github.com/RamazanKara/vramwatch/internal/render"
 	"github.com/RamazanKara/vramwatch/internal/source"
 )
@@ -86,9 +89,92 @@ func renderFrame(ctx context.Context, s source.Source, opts render.Options, kvBi
 		out = "\x1b[H\x1b[2J" // home + clear
 	}
 	out += render.Table(snap, opts)
+	if comparison := trackWatchPrediction(snap); comparison != "" {
+		out += comparison + "\n"
+	}
 	if footer != "" {
 		out += "\n" + footer + "\n"
 	}
 	os.Stdout.WriteString(out)
 	return nil
+}
+
+type watchTrackState struct {
+	id       string
+	last     uint64
+	stable   int
+	recorded bool
+}
+
+var watchTrack watchTrackState
+
+func trackWatchPrediction(snap model.Snapshot) string {
+	records, err := ledger.List()
+	if err != nil {
+		return ""
+	}
+	for _, bd := range snap.Breakdowns {
+		if len(bd.Models) != 1 {
+			continue
+		}
+		for _, rec := range records {
+			if !recordMatchesModel(rec, bd.Models[0]) {
+				continue
+			}
+			return trackWatchBreakdown(rec, bd)
+		}
+	}
+	return ""
+}
+
+func trackWatchBreakdown(rec ledger.Record, bd model.Breakdown) string {
+	var fp uint64
+	for _, s := range bd.Segments {
+		if s.Kind == model.KindWeights || s.Kind == model.KindKVCache || s.Kind == model.KindCompute {
+			fp = saturatingBytes(fp, s.Bytes)
+		}
+	}
+	prov := model.ProvenanceEstimated
+	source := "attributed model footprint"
+	if measured := measuredLoaderFootprint(bd.GPU, bd.Models); measured > 0 {
+		fp = measured
+		prov = model.ProvenanceMeasured
+		source = "driver process memory"
+	} else if bd.Models[0].VRAMBytes > 0 {
+		fp = bd.Models[0].VRAMBytes
+		prov = loaderVRAMProvenance(bd.Models[0])
+		source = bd.Models[0].Loader + " model footprint"
+	}
+	if fp == 0 {
+		return ""
+	}
+	if watchTrack.id != rec.ID {
+		watchTrack = watchTrackState{id: rec.ID, last: fp, stable: 1}
+	} else {
+		delta := math.Abs(float64(fp)-float64(watchTrack.last)) / float64(fp)
+		if delta <= 0.02 {
+			watchTrack.stable++
+		} else {
+			watchTrack.stable = 1
+			watchTrack.recorded = false
+		}
+		watchTrack.last = fp
+	}
+	if watchTrack.stable >= 3 && !watchTrack.recorded {
+		if _, err := ledger.UpdateObservation(rec.ID, fp, prov, source); err == nil {
+			watchTrack.recorded = true
+		}
+	}
+	signed := 100 * (float64(rec.Prediction.ExpectedFootprintBytes) - float64(fp)) / float64(fp)
+	return fmt.Sprintf("prediction %s  [E] %s expected · [%s] %s observed · error %+.1f%%", rec.ID, model.HumanBytes(rec.Prediction.ExpectedFootprintBytes), watchProvBadge(prov), model.HumanBytes(fp), signed)
+}
+
+func watchProvBadge(p model.Provenance) string {
+	if p == model.ProvenanceMeasured {
+		return "M"
+	}
+	if p == model.ProvenanceReported {
+		return "R"
+	}
+	return "E"
 }

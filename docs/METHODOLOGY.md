@@ -1,152 +1,237 @@
-# How vramwatch attributes VRAM
+# Methodology
 
-This document explains exactly how vramwatch turns two data sources (the GPU
-driver and the inference loader) into the weights/KV/other breakdown, what is
-measured versus estimated, and where the numbers can be wrong. If you only read
-one thing: the KV-cache formula is exact for an unquantized cache (f16/bf16/f32)
-and a small, deliberately conservative over-estimate for a quantized one.
-Everything else in the split is a best-effort estimate, and the output labels it
-as such.
+vramwatch has two related engines:
 
-## The two inputs
+1. `fit` predicts a model before it is loaded.
+2. `watch` attributes a model that is already resident.
 
-For each GPU, vramwatch gathers:
+Both use the same GGUF architecture fields and the same provenance vocabulary,
+but they answer different questions. This document describes the arithmetic and
+where uncertainty enters.
 
-1. **Driver / OS truth**:
-   - total / used / free VRAM for the device, from `nvidia-smi`, `amd-smi`, or on
-     **Windows** the registry (`HardwareInformation.qwMemorySize` for the total) plus
-     the built-in `GPU Adapter Memory\Dedicated Usage` performance counter
-     (`typeperf`) for usage. This is what makes AMD work on Windows, where the
-     consumer driver ships no `amd-smi`.
-   - per-process VRAM: NVIDIA via `nvidia-smi --query-compute-apps`; AMD via the
-     kernel’s `/proc/<pid>/fdinfo` DRM interface on Linux (deduplicated by DRM
-     client id and mapped to a device by PCI address). The `fdinfo` reader is
-     vendor-neutral but only AMD devices are currently surfaced. (Windows per-process
-     GPU counters over-report shared memory, so they aren’t used for the split.)
+## Provenance
 
-2. **Loader truth** (which models are resident and their shape):
-   - **Ollama**: `GET /api/ps` gives each model’s name and `size_vram`; `POST
-     /api/show` gives `model_info` (architecture: `block_count`,
-     `attention.head_count`, `attention.head_count_kv`, `attention.key_length`,
-     `embedding_length`, `context_length`).
-   - **llama.cpp**: `GET /props` gives the running context (`n_ctx`) and the model
-     file path. vramwatch then reads the **GGUF file header** directly (no tensor
-     data) to recover the same architecture fields and the file size.
+Every important value is assigned one of five sources:
 
-## The KV-cache formula
+| Badge | JSON value | Meaning |
+|---|---|---|
+| `[M]` | `measured` | sampled from a driver or OS counter |
+| `[R]` | `loader_reported` | returned by a loader API |
+| `[E]` | `model_estimated` | derived from metadata or other observations |
+| `[A]` | `assumed` | conservative vramwatch policy |
+| `[U]` | `user_supplied` | supplied explicitly, such as `--vram` |
 
-The attention KV cache grows linearly with context. Per token it costs:
+A mathematically derived value is not relabelled “measured” merely because its
+inputs were measured.
 
-```
-KV bytes/token = 2 · n_layers · n_kv_heads · head_dim · (kv_bits / 8)
-```
+## Preflight metadata resolution
 
-- `2`: one Key tensor and one Value tensor.
-- `n_kv_heads`: the number of **key/value** heads. For grouped-query attention
-  (GQA) this is smaller than the number of query heads, which is why a
-  modern 70B model has a much smaller KV cache than its size suggests. For
-  multi-head attention (MHA), `n_kv_heads == n_heads`.
-- `head_dim`: per-head dimension (`key_length` if the model reports it, else
-  `embedding_length / n_heads`).
-- `kv_bits`: bits per cache element, 16 for f16/bf16 (the default), 32 for f32.
-  Block-quantized caches also store a per-block f16 scale (and an f16 min for the
-  `_1` variants) over 32 elements, so their true cost is higher than the nominal
-  width: `q8_0` ≈ 8.5, `q5_0` ≈ 5.5, `q5_1` = 6, `q4_0` ≈ 4.5, `q4_1` = 5 bits.
-  `--kv-cache-type` rounds these **up** (q8_0→9, q5→6, q4→5) so the estimate stays
-  conservative, since an OOM predictor should never under-count.
+`fit` needs two facts without loading model tensors:
 
-### Worked example: Llama-3-8B at 8k context, f16 cache
+- the exact byte size of the selected GGUF artifact or shard set; and
+- architecture fields sufficient to estimate the KV cache.
 
-`n_layers = 32`, `n_kv_heads = 8` (GQA), `head_dim = 128`, `kv_bits = 16`:
+For a local GGUF, vramwatch reads metadata from the file header and uses its file
+size. For Hugging Face it reads the model API (`?blobs=true`), selects a GGUF by
+`--quant` or `--file`, sums every shard, then reads a bounded ranged response from
+the first shard. For Ollama it reads the OCI manifest and config, sums
+model/projector layers, then ranges the model blob. A direct HTTPS URL is ranged
+and must expose its complete size through `Content-Range` or an equivalent
+linked-size header.
 
-```
-KV/token = 2 · 32 · 8 · 128 · (16/8) = 131,072 bytes = 128 KiB
-KV @ 8192 = 128 KiB · 8192 = 1.00 GiB
-```
+Remote metadata has a hard 16 MiB budget, and the response is closed as soon as
+the architecture fields are parsed. If a server ignores Range and would force a
+larger response, the request is stopped. Unknown file sizes, incomplete shard sets, ambiguous
+files, malformed GGUF headers, and incomplete architectures fail closed; none can
+turn into a zero-byte optimistic prediction.
 
-Declare a `q8_0` cache (`--kv-cache-type q8_0`, modelled at 9 bits) and the estimate
-drops to ~576 MiB; `q4_0` (5 bits) to ~320 MiB, versus 1 GiB at f16. That can be the
-difference between “fits” and “OOM”, which is why declaring the dtype matters.
+The architecture fields are:
 
-## Attribution: tiling the device
+- transformer block count;
+- KV-head count (falling back to attention-head count for MHA);
+- key-head dimension (`attention.key_length`, else embedding/head count);
+- value-head dimension (`attention.value_length`, else key dimension); and
+- trained context length, when present.
 
-Given the footprint of the inference process on a device, vramwatch splits it into
-`weights`, `KV cache`, and `compute` (activations, scratch, the CUDA/HIP context),
-then adds `other apps` (everything else on the device) and `free`. The five
-segments always sum exactly to the device total.
+`general.file_type` is used to identify common GGUF quantizations. Selection also
+recognizes quantization names in filenames. The selected artifact's actual byte
+size drives weight residency; vramwatch does not estimate weights from parameter
+count and nominal bits.
 
-The footprint is chosen in priority order:
+## KV-cache estimate
 
-1. per-process driver VRAM for the inference process, matched first by **PID**,
-   then by **process name** (e.g. an `ollama` / `llama-server` process). This uses
-   the *real* resident VRAM, including runtime overhead the loader doesn’t report.
-2. the loader’s reported VRAM (`size_vram` for Ollama), else
-3. `weights + KV` derived from the GGUF file and the formula (llama.cpp).
+For a full attention cache with one sequence:
 
-Then:
-
-- **KV cache** is the loader-reported value if present, otherwise the formula
-  estimate (labelled `estimated`).
-- **Weights** come from the model's GGUF file size when vramwatch can read the
-  file: for llama.cpp via the path in `/props`, and for Ollama via the blob path in
-  the `/api/show` modelfile. That separates compute/scratch VRAM from weights. When
-  the file isn't readable, weights fall back to the remainder, `footprint − KV`.
-- **Compute** is whatever footprint remains after weights and KV.
-- **Other apps** is `device used − inference footprint`.
-- **Free** is `device total − device used`.
-
-### Guardrails
-
-- Reported (ground-truth) figures always win over estimated ones, so an
-  over-estimated KV can never shrink a loader-reported weights value.
-- An estimated KV cache can never claim the entire footprint (weights must be
-  resident too). If the estimate exceeds the footprint, which usually means the
-  cache is quantized but wasn’t declared, vramwatch caps it and prints a warning.
-- All arithmetic is unsigned and clamped, so the segments never underflow or
-  exceed the device total.
-
-## Prediction
-
-Because KV grows linearly, the maximum context that still fits is:
-
-```
-max_context ≈ current_context + (free_VRAM ÷ KV_bytes_per_token)
+```text
+KV elements = context × layers × KV heads × (key dimension + value dimension)
+KV bytes    = KV elements × element width
 ```
 
-capped at the model’s trained context length. `predict --context N` answers the
-inverse question of whether a target `N` fits, by holding weights and compute
-constant and scaling only the KV cache:
+This handles grouped-query/multi-query attention and models whose key and value
+dimensions differ. If no value dimension is present, it reduces to the familiar:
 
-```
-needed(N) = weights + compute + KV/token · N
-fits      = needed(N) ≤ 98% of device total
+```text
+2 × context × layers × KV heads × head dimension × element width
 ```
 
-If `N` exceeds the model’s trained context, vramwatch says so even when it fits in
-VRAM.
+Widths used by preflight prediction are exact rational values for the common GGML
+block formats:
 
-## What’s measured vs. estimated
+| Cache type | Effective bits/element |
+|---|---:|
+| f32 | 32 |
+| f16 / bf16 | 16 |
+| q8_0 | 8.5 |
+| q5_0 | 5.5 |
+| q5_1 | 6 |
+| q4_0 | 4.5 |
+| q4_1 | 5 |
 
-| Figure | Source | Trust |
-|--------|--------|-------|
-| Device total / used / free | driver | measured |
-| Per-process VRAM (NVIDIA) | driver | measured |
-| KV cache | formula (`arch × ctx × dtype`) | estimated; exact at f16/bf16/f32, conservative (rounded up) for quantized |
-| Weights (GGUF readable) | GGUF file size | measured from the file (assumes full offload) |
-| Weights (GGUF not readable) | `footprint − KV` | estimated |
-| Compute overhead | footprint remainder | estimated |
-| Max context before OOM | `free ÷ KV/token` | estimated, linear |
+The half-bit overhead is the per-block scale (and, for `_1`, minimum) amortized
+over 32 values. Live watch stores an integer bit width in its architecture model,
+so quantized cache widths are rounded upward there (`q8_0` → 9, `q5` → 6,
+`q4` → 5). That preserves the no-under-count rule.
 
-## Known sources of error
+This is a logical full-cache estimate. Backend padding, graph layout, paged-cache
+allocation, parallel sequences, sliding-window/hybrid attention, recurrent state,
+and separate K/V cache types can change physical allocation. These effects are a
+reason the value is labelled `[E]`, even for an unquantized cache.
 
-- **Undeclared quantized KV cache** → KV over-estimated (and weights
-  correspondingly under-estimated). Fix: `--kv-cache-type`.
-- **Partial GPU offload in llama.cpp** → GGUF file size over-states VRAM weights.
-- **AMD**: no per-process VRAM, so if another process shares the GPU the “other
-  apps” bucket may absorb some of the model’s footprint or vice-versa.
-- **Flash-attention / paged KV** implementations may allocate the KV cache in
-  blocks. The formula gives the logical size, which can differ from the physical
-  reservation by a small margin.
+### Worked KV example
 
-vramwatch aims to be *useful and honest*, not a substitute for an allocator-level
-profiler. When in doubt, the `estimated` label is telling you the truth.
+For 32 layers, 8 KV heads, 128-dimensional keys and values, f16, and 8192 tokens:
+
+```text
+KV/token = 32 × 8 × (128 + 128) × 2 bytes
+         = 131,072 bytes = 128 KiB
+
+KV total = 128 KiB × 8192 = 1 GiB
+```
+
+At 32,768 tokens, the same cache is 4 GiB.
+
+## The `conservative-v1` fit policy
+
+The prediction exposes both an expected footprint (used later to score accuracy)
+and a conservative launch requirement (used for the verdict):
+
+```text
+weights          = selected GGUF/shard bytes                         [E]
+KV               = architecture × requested context × cache width   [E]
+runtime expected = max(64 MiB, 10% of weights), rounded to 16 MiB    [A]
+runtime ceiling  = max(256 MiB, 15% of weights), rounded to 16 MiB   [A]
+
+expected footprint     = weights + KV + runtime expected
+conservative footprint = weights + KV + runtime ceiling
+safety margin          = max(512 MiB, 5% of capacity), rounded to 16 MiB [A]
+required               = conservative footprint + safety margin
+```
+
+The GGUF size is labelled estimated GPU residency because it assumes the entire
+artifact is offloaded to one accelerator. File headers and alignment are included,
+which is slightly conservative. The runtime terms cover backend context, graph,
+scratch, allocator, and activation memory without pretending to model a specific
+backend allocator.
+
+For each accelerator:
+
+```text
+fits on device = required ≤ accelerator capacity
+fits right now = required ≤ currently available accelerator memory
+```
+
+The second result is `unknown` when usage could not be measured. A true zero-free
+sample is distinct and returns `does_not_fit`. If requested context exceeds the
+GGUF's trained context, the verdict is `context_unsupported` even if the byte
+budget would fit.
+
+All prediction additions and multiplications saturate on overflow. Hostile or
+implausibly large metadata therefore becomes “does not fit,” never a wrapped small
+number.
+
+The policy deliberately does not combine several GPUs. Each target is evaluated
+for full residency. Tensor/row splitting and partial CPU offload require
+loader-specific planning and are outside `conservative-v1`.
+
+## Live device and loader inputs
+
+`watch` composes device observations with loader observations.
+
+Device inputs:
+
+- NVIDIA: total/used/free and compute-process memory from `nvidia-smi`.
+- AMD with AMD SMI: capacity and usage from `amd-smi`; on Linux, process memory
+  is augmented from DRM `/proc/<pid>/fdinfo` and mapped by PCI address.
+- Windows non-NVIDIA: capacity from the display-adapter registry and dedicated
+  usage from the `GPU Adapter Memory` performance counter when mapping is
+  unambiguous.
+- Apple silicon: Metal's recommended maximum working set is the accelerator
+  budget. Non-overlapping Mach VM free + inactive pages form a conservative
+  current reclaimable estimate, clamped to that budget. Speculative pages are
+  already included in `free_count`, so they are not added again. This is unified
+  system memory, not dedicated VRAM, and is labelled as such.
+
+Loader inputs:
+
+- Ollama: `/api/ps` for resident identity/context/VRAM and `/api/show` for GGUF
+  architecture and local blob path.
+- llama.cpp server: `/props` for identity/context/model path, then a local GGUF
+  header when the loopback server's path is readable.
+
+## Live attribution
+
+The inference footprint is selected in this order:
+
+1. driver-measured process memory matched by loader PID, then by a narrow loader
+   process name (`ollama*`, `llama-*`);
+2. loader-reported model VRAM; or
+3. estimated weights + KV when no footprint is exposed.
+
+Inside that footprint:
+
+- loader-reported KV wins; otherwise KV is estimated from architecture;
+- readable GGUF size supplies estimated fully-offloaded weights;
+- if weights are unavailable, they are the footprint remainder after KV;
+- compute/runtime is the remaining inference footprint;
+- other processes are device used minus inference footprint; and
+- free memory is device total minus device used.
+
+Reported weights win conflicts with estimated KV. An estimated KV is capped so it
+cannot consume the entire inference footprint. Every segment is clamped and the
+segments tile device capacity exactly.
+
+## Prediction ledger and accuracy
+
+`fit` stores its result locally unless `--no-record` is set. A resident model is
+paired only when identity (name or a comparable digest), context, and available
+quantization agree, and only when exactly one model is resident on that device.
+
+Watch waits for three footprint samples within 2% before persisting an observation.
+`report` may take a current matching observation immediately. Driver process memory
+is `[M]`; loader model VRAM is `[R]`; an attributed fallback is `[E]`.
+
+Accuracy compares the *expected* footprint, not the conservative launch ceiling:
+
+```text
+signed error %   = 100 × (predicted - observed) / observed
+absolute error % = abs(signed error %)
+```
+
+A positive signed error means vramwatch over-predicted; a negative value means it
+under-predicted. The conservative margin is excluded so it does not make the
+estimator look artificially inaccurate.
+
+## Known error sources
+
+- partial GPU offload makes GGUF size overstate GPU-resident weights;
+- undeclared KV quantization makes the default f16 cache estimate too large;
+- loader/backend graph and scratch allocations differ from the generic runtime
+  policy;
+- another process can allocate after the current-availability sample;
+- fragmented allocators can fail despite sufficient aggregate free memory;
+- process counters may be unavailable because of driver, OS, or permissions; and
+- hybrid/sliding-window/recurrent architectures can allocate less or differently
+  than a full attention cache.
+
+vramwatch's goal is a conservative, inspectable planning estimate whose uncertainty
+is visible—not an allocator-level proof.

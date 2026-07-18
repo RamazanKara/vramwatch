@@ -1,89 +1,151 @@
 # FAQ
 
-### Why does it say `estimated`?
+### Does `fit` download the model?
 
-Because that figure was derived, not measured. vramwatch does not hook the
-CUDA/HIP allocator (yet), so weights and the KV cache are computed from the model’s
-architecture and reported footprint. The device total/used/free and NVIDIA
-per-process VRAM *are* measured. See [METHODOLOGY.md](METHODOLOGY.md) for exactly
-what falls in each bucket.
+No model tensors are intentionally downloaded. Hugging Face and Ollama fits use
+repository/manifest metadata for byte size and one bounded HTTP Range request for
+the GGUF header. Direct HTTPS GGUFs use the same range path. The response is closed
+as soon as the architecture is complete. The combined remote metadata budget is
+16 MiB; an ignored large Range response is refused.
 
-### My KV cache looks 2× too big
+For a private Hugging Face repository, export `HF_TOKEN`. The token is sent only
+to Hugging Face metadata requests and is not written to the report card.
 
-You’re probably running a quantized KV cache and vramwatch is assuming f16.
-Tell it the dtype:
-
-```sh
-vramwatch watch --kv-cache-type q8_0     # or q4_0, f32, bf16, ...
-# or: export VRAMWATCH_KV_CACHE_TYPE=q8_0
-```
-
-With Ollama that’s whatever you set `OLLAMA_KV_CACHE_TYPE` to; with llama.cpp it’s
-your `--cache-type-k` / `--cache-type-v`.
-
-### The numbers don’t match `nvidia-smi`
-
-The device total/used/free should match `nvidia-smi` closely, since vramwatch reads
-those from it. The split within a process (weights vs KV vs compute) is what
-`nvidia-smi` doesn’t provide and vramwatch estimates. If the *device* numbers
-disagree, check that you’re looking at the same GPU index and that no other tool is
-allocating between samples.
-
-### `weights` looks wrong for my llama.cpp model
-
-vramwatch uses the GGUF file size as the weights estimate, which only equals VRAM
-weights when the whole model is offloaded to the GPU. If you ran with partial offload
-(`-ngl` less than the layer count), the file size over-states GPU weights.
-
-### Does AMD per-process VRAM work?
-
-On Linux, yes. vramwatch reads it from `/proc/<pid>/fdinfo` (the same DRM
-interface `nvtop`/`amdgpu_top` use), so it attributes VRAM to the real
-`ollama`/`llama-server` process. It only sees processes you have permission to read,
-so if your loader runs as another user (e.g. a systemd service), run vramwatch as
-that user or as root. On Windows/macOS, AMD falls back to the loader’s reported VRAM.
-
-### It didn’t detect my model / GPU
-
-Run the diagnostic:
+### Which `MODEL` syntax should I use?
 
 ```sh
-vramwatch devices
+vramwatch fit ollama:llama3.2:3b-instruct --quant q4_k_m --context 32768
+vramwatch fit hf:owner/repo --quant q4_k_m --context 32768
+vramwatch fit owner/repo --quant q4_k_m --context 32768  # inferred Hugging Face
+vramwatch fit /models/model.gguf --context 32768
+vramwatch fit https://host/model.gguf --context 32768
 ```
 
-It lists which GPU tools (`nvidia-smi`, `amd-smi`) and loaders (Ollama, llama.cpp)
-were found. Common causes:
+Use `--file` when a Hub repository contains more than one matching GGUF. For an
+Ollama name containing `/`, keep the explicit `ollama:` prefix so it is not
+interpreted as a Hugging Face repository.
 
-- **Ollama** isn’t serving on `127.0.0.1:11434`. Set `OLLAMA_HOST`.
-- **llama.cpp** isn’t serving on `127.0.0.1:8080`. Set `LLAMACPP_HOST`.
-- The model isn’t actually loaded (Ollama unloads idle models), so send it a request
-  first.
+### Why are there “on device” and “right now” verdicts?
 
-### Does it support vLLM / MLX / TGI / LM Studio?
+`on device` answers whether the complete model fits the accelerator's capacity.
+`right now` subtracts current allocations. A model can therefore fit the card but
+not fit until another process/model is unloaded.
 
-Not yet. Ollama and llama.cpp are supported today. vLLM, MLX and Apple Metal are
-on the roadmap. A new loader is a small, self-contained contribution; see
-[CONTRIBUTING.md](../CONTRIBUTING.md).
+If the provider can read capacity but not current usage, `right now` is `UNKNOWN`.
+vramwatch does not assume an unmeasured card is empty. Run `vramwatch doctor` for
+the failing counter/provider.
 
-### Does it work without a GPU?
+### Why can a required value exceed the displayed conservative footprint?
 
-Yes, for trying it out. `--source demo` synthesises a card whose KV cache grows until
-OOM, and `--source mock:PATH` replays a scenario JSON. These drive the exact same
-attribution engine as live data.
+The launch verdict also includes a per-device safety reserve:
 
-### Does it phone home / need an account?
+```text
+required = conservative footprint + max(512 MiB, 5% of capacity)
+```
 
-No. It shells out to local vendor tools and makes HTTP requests to loopback only.
-Nothing leaves your machine.
+`fit` prints this `[A]` margin and the final required bytes under each target.
 
-### Can I get machine-readable output?
+### What do `[M]`, `[R]`, `[E]`, `[A]`, and `[U]` mean?
 
-`snapshot --json` and `predict --json` emit structured JSON for scripting and
-dashboards. `snapshot --svg` writes a shareable scorecard.
+- `[M]`: directly measured by a driver or OS counter.
+- `[R]`: returned by a loader API.
+- `[E]`: estimated from GGUF metadata, model math, or a remainder.
+- `[A]`: a conservative vramwatch policy assumption.
+- `[U]`: a value you supplied, such as `--vram 24GiB`.
 
-### How accurate is the OOM prediction?
+The badges are part of console, JSON provenance fields, watch, and SVG reporting.
 
-The KV growth is exact for an f16/bf16/f32 cache (and a small conservative
-over-estimate for a quantized one), so the *max context* estimate is good when
-weights and overhead stay constant. It’s a planning number, not a guarantee: a
-fragmenting allocator or a second process can still OOM you earlier.
+### Why does the KV cache look too large?
+
+The default is f16. Tell vramwatch when the loader uses a quantized cache:
+
+```sh
+vramwatch fit MODEL --context 32768 --kv-cache-type q8_0
+vramwatch watch --kv-cache-type q8_0
+```
+
+Supported preflight types are f32, f16/bf16, q8_0, q5_0/q5_1, and q4_0/q4_1.
+vramwatch currently assumes K and V use the same type.
+
+### Does fit support split GPUs or partial CPU offload?
+
+Not yet. `conservative-v1` evaluates full model residency on each accelerator
+independently. A tensor-split loader may fit a model that vramwatch says does not
+fit one card. Conversely, a partially offloaded llama.cpp model may use less GPU
+memory than the full GGUF size. Those require loader-specific planners.
+
+### Why does `report` say accuracy is pending?
+
+The saved prediction has not been matched to a resident model yet. Load the same
+model with the same quant and context, then run `vramwatch watch` or
+`vramwatch report` again. Pairing is deliberately strict and requires exactly one
+resident model on the device so an unrelated allocation is not scored as the
+prediction.
+
+You can select a non-latest record with:
+
+```sh
+vramwatch report --prediction 0123456789abcdef
+```
+
+### Where is prediction history stored?
+
+- Linux: `$XDG_STATE_HOME/vramwatch` or `~/.local/state/vramwatch`
+- macOS: `~/Library/Application Support/vramwatch`
+- Windows: `%LOCALAPPDATA%\vramwatch`
+
+Override it with `VRAMWATCH_STATE_DIR`. Each prediction is a private JSON file;
+there is no telemetry service. Use `fit --no-record` to disable persistence for a
+single prediction.
+
+### Is the SVG safe to share?
+
+The SVG omits hostname, PID, PCI bus, serial number, local path, and signed URL
+query fields. It includes the human-visible GPU/model identity, quant, context,
+prediction ID, and accuracy because those are the purpose of the card.
+
+The local ledger and raw `report --json` are not scrubbed; they can contain the
+original model reference and should be treated as local diagnostic data.
+
+### Does vramwatch phone home?
+
+There is no account or telemetry. `watch` and normal `doctor` use local drivers and
+loopback loader APIs. Remote `fit` necessarily contacts the selected Hugging Face
+or Ollama registry for metadata. `doctor --online` makes explicit registry probes.
+
+### What does Apple support mean when memory is unified?
+
+On Apple silicon, capacity is Metal's recommended maximum working set and current
+availability comes from reclaimable Mach VM pages, clamped to that budget. Output
+uses `unified_memory`, not `dedicated_vram`. This is a planning budget shared with
+the OS and applications, so it is more dynamic than a discrete card's VRAM.
+
+Release binaries for macOS are built natively with Metal support. A custom
+`CGO_ENABLED=0` build compiles, but its Apple Metal provider is intentionally
+unavailable.
+
+### `doctor` found the loader but cannot confirm acceleration
+
+The loader endpoint is healthy, but neither the loader nor the driver showed GPU
+memory for the resident model. Check the loader's CUDA, ROCm, Vulkan, or Metal
+backend log and its layer-offload settings. If no model is resident, load one and
+run doctor again.
+
+### Can I use vramwatch without detected hardware?
+
+Yes. Preflight a known budget with `fit --vram 24GiB`. For the live UI and provider
+development, `watch --source demo` synthesizes growth and `watch --source
+mock:path.json` replays a fixture.
+
+### What output is stable for scripts?
+
+`fit --json`, `doctor --json`, and `report --json` emit envelopes with
+`schema_version: 1`. Fit exits `0` when any target fits, `3` when the prediction is
+valid but no target fits, `2` for command usage, and `1` for operational errors
+or an indeterminate hardware budget.
+
+### Where did `predict`, `snapshot`, and `devices` go?
+
+They were the exploratory 0.x surface. Use `fit`, `report`, and `doctor`
+respectively. The old names return a direct migration message rather than silently
+changing behavior.

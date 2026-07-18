@@ -20,8 +20,8 @@ fmt: ## check formatting (fails if any file needs gofmt)
 tidy:
 	go mod tidy
 
-run: build ## one-shot snapshot of the local machine
-	./$(BINARY) snapshot
+run: build ## show the launch CLI
+	./$(BINARY) help
 
 watch: build ## live TUI against the local machine
 	./$(BINARY) watch
@@ -29,9 +29,8 @@ watch: build ## live TUI against the local machine
 demo: build ## live TUI against the synthetic growing-KV demo source
 	./$(BINARY) watch --source demo
 
-card: build ## regenerate the committed sample scorecard + JSON
-	./$(BINARY) snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --static --svg docs/sample/vramwatch-card.svg
-	./$(BINARY) snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --static --json > docs/sample/snapshot.json
+card: ## regenerate the deterministic report card used in the docs
+	go run ./tools/reportfixture > docs/sample/vramwatch-card.svg
 
 gif: ## regenerate docs/demo.gif (standalone module; fetches golang.org/x/image)
 	cd docs/gifgen && go run . ../demo.gif

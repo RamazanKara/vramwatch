@@ -2,6 +2,7 @@ package gpu
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"strings"
 
@@ -49,13 +50,17 @@ func parseNvidiaGPUs(csv string) ([]model.GPU, map[string]int) {
 			continue
 		}
 		g := model.GPU{
-			Index:      atoiDefault(f[0], len(gpus)),
-			Name:       f[1],
-			Vendor:     model.VendorNVIDIA,
-			TotalBytes: mibToBytes(f[2]),
-			UsedBytes:  mibToBytes(f[3]),
-			FreeBytes:  mibToBytes(f[4]),
-			Driver:     f[5],
+			Index:          atoiDefault(f[0], len(gpus)),
+			Name:           f[1],
+			Vendor:         model.VendorNVIDIA,
+			TotalBytes:     mibToBytes(f[2]),
+			UsedBytes:      mibToBytes(f[3]),
+			FreeBytes:      mibToBytes(f[4]),
+			Driver:         f[5],
+			MemoryKind:     model.MemoryDedicated,
+			BudgetBytes:    mibToBytes(f[2]),
+			CapacitySource: model.ProvenanceMeasured,
+			UsageSource:    model.ProvenanceMeasured,
 		}
 		uuid := f[6]
 		idx[uuid] = len(gpus)
@@ -107,7 +112,7 @@ func splitCSV(line string) []string {
 func mibToBytes(s string) uint64 {
 	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "MiB"))
 	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil || f < 0 {
+	if err != nil || f < 0 || math.IsNaN(f) || math.IsInf(f, 0) || f >= maxPlausibleVRAM/float64(model.MiB) {
 		return 0
 	}
 	return uint64(f * model.MiB)
