@@ -23,7 +23,7 @@ type Ollama struct {
 type archInfo struct {
 	arch     model.Arch
 	ctxMax   int
-	blobPath string // local GGUF path from the modelfile, for a measured weight size
+	blobPath string // local GGUF path; exact file size becomes estimated residency
 }
 
 // NewOllama builds an Ollama provider. An empty base uses OLLAMA_HOST or the
@@ -46,6 +46,7 @@ type psResponse struct {
 type psModel struct {
 	Name          string `json:"name"`
 	Model         string `json:"model"`
+	Digest        string `json:"digest"`
 	Size          uint64 `json:"size"`
 	SizeVRAM      uint64 `json:"size_vram"`
 	ContextLength int    `json:"context_length"`
@@ -69,15 +70,22 @@ func (o *Ollama) Models(ctx context.Context) ([]model.LoaderModel, error) {
 	}
 	out := make([]model.LoaderModel, 0, len(ps.Models))
 	for _, m := range ps.Models {
+		name := m.Name
+		if name == "" {
+			name = m.Model
+		}
 		lm := model.LoaderModel{
 			Loader:        "ollama",
-			Name:          m.Name,
+			Name:          name,
 			GPUIndex:      -1,
 			VRAMBytes:     m.SizeVRAM,
 			ContextTokens: m.ContextLength,
 			Estimated:     true,
+			Quantization:  strings.ToUpper(m.Details.QuantizationLevel),
+			Digest:        m.Digest,
+			VRAMSource:    model.ProvenanceReported,
 		}
-		ai := o.arch(ctx, m.Name)
+		ai := o.arch(ctx, name)
 		lm.Arch = ai.arch
 		lm.ContextMax = ai.ctxMax
 		if lm.ContextTokens == 0 && ai.ctxMax > 0 {
@@ -89,6 +97,7 @@ func (o *Ollama) Models(ctx context.Context) ([]model.LoaderModel, error) {
 		// the weight figure instead of leaving weights as the footprint remainder.
 		// This separates compute/scratch VRAM from weights in the split.
 		if ai.blobPath != "" && isLocalURL(o.Base) {
+			lm.ArtifactPath = ai.blobPath
 			if fi, err := os.Stat(ai.blobPath); err == nil && fi.Size() > 0 {
 				lm.WeightsBytes = uint64(fi.Size())
 			}
@@ -156,6 +165,7 @@ func parseOllamaArch(info map[string]any) archInfo {
 		kvHeads = headCount // multi-head attention: kv heads == query heads
 	}
 	keyLen := numAt(info, p+"attention.key_length")
+	valueLen := numAt(info, p+"attention.value_length")
 	embLen := numAt(info, p+"embedding_length")
 	ctxMax := numAt(info, p+"context_length")
 
@@ -170,6 +180,7 @@ func parseOllamaArch(info map[string]any) archInfo {
 			Layers:     layers,
 			KVHeads:    kvHeads,
 			HeadDim:    headDim,
+			ValueDim:   valueLen,
 			KVTypeBits: 16, // Ollama does not expose the KV cache type; assume f16
 		},
 		ctxMax: ctxMax,

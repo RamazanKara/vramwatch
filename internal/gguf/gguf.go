@@ -5,10 +5,12 @@ package gguf
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/RamazanKara/vramwatch/internal/model"
 )
@@ -17,21 +19,26 @@ const magic = "GGUF"
 
 // Limits guarding against corrupt/hostile headers.
 const (
-	maxKVCount    = 1 << 20 // metadata key/value pairs
-	maxStringLen  = 1 << 26 // 64 MiB per string
-	maxArrayCount = 1 << 30
-	maxArrayDepth = 16 // real GGUF metadata is never deeply nested
+	maxKVCount     = 1 << 20 // metadata key/value pairs
+	maxStringLen   = 1 << 26 // 64 MiB per string
+	maxArrayCount  = 1 << 30
+	maxArrayDepth  = 16 // real GGUF metadata is never deeply nested
+	maxLocalHeader = 256 * model.MiB
 )
 
 // Info is the subset of GGUF metadata vramwatch consumes, plus the file size.
 type Info struct {
+	Name          string
 	Architecture  string
 	Layers        int
 	HeadCount     int
 	HeadCountKV   int
 	KeyLength     int
+	ValueLength   int
 	EmbeddingLen  int
 	ContextLength int
+	FileType      int
+	FileTypeKnown bool
 	FileSize      uint64
 }
 
@@ -49,11 +56,16 @@ func (i Info) HeadDim() int {
 
 // ToArch converts the GGUF metadata into a model.Arch (f16 KV cache assumed).
 func (i Info) ToArch() model.Arch {
+	valueDim := i.ValueLength
+	if valueDim == 0 {
+		valueDim = i.HeadDim()
+	}
 	return model.Arch{
 		Name:       i.Architecture,
 		Layers:     i.Layers,
 		KVHeads:    i.HeadCountKV,
 		HeadDim:    i.HeadDim(),
+		ValueDim:   valueDim,
 		KVTypeBits: 16,
 	}
 }
@@ -69,9 +81,27 @@ func Read(path string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	info := Info{FileSize: uint64(st.Size())}
+	var src io.Reader = f
+	if st.Size() > int64(maxLocalHeader) {
+		src = io.LimitReader(f, int64(maxLocalHeader))
+	}
+	info, err := readFrom(src, uint64(st.Size()), false)
+	if err != nil && st.Size() > int64(maxLocalHeader) && (err == io.EOF || err == io.ErrUnexpectedEOF) {
+		return info, fmt.Errorf("gguf: metadata header exceeds %s limit", model.HumanBytes(maxLocalHeader))
+	}
+	return info, err
+}
 
-	r := bufio.NewReaderSize(f, 1<<16)
+// ReadPrefix parses architecture metadata from a bounded prefix fetched with
+// HTTP Range. It stops as soon as the fields needed for fit prediction are
+// known and never requires tensor data or tokenizer arrays.
+func ReadPrefix(data []byte, fileSize uint64) (Info, error) {
+	return readFrom(bytes.NewReader(data), fileSize, true)
+}
+
+func readFrom(src io.Reader, fileSize uint64, stopWhenReady bool) (Info, error) {
+	info := Info{FileSize: fileSize}
+	r := bufio.NewReaderSize(src, 1<<16)
 	var mg [4]byte
 	if _, err := io.ReadFull(r, mg[:]); err != nil {
 		return info, err
@@ -108,11 +138,23 @@ func Read(path string) (Info, error) {
 		if err != nil {
 			return info, err
 		}
+		// Architecture metadata is normally followed by tokenizer arrays. When
+		// optional KV fields are absent (for example MHA omits head_count_kv), stop
+		// at that clear boundary without consuming a potentially multi-megabyte
+		// token list. Until the boundary, keep scanning so a late GQA/value field
+		// cannot be mistaken for an absent one.
+		if stopWhenReady && metadataBoundary(key, vtype, strs, nums) {
+			break
+		}
 		if err := readTopValue(r, key, vtype, strs, nums); err != nil {
 			return info, err
 		}
+		if stopWhenReady && coreMetadataReady(strs, nums, true) {
+			break
+		}
 	}
 
+	info.Name = strs["general.name"]
 	info.Architecture = strs["general.architecture"]
 	p := info.Architecture + "."
 	info.Layers = int(nums[p+"block_count"])
@@ -122,9 +164,60 @@ func Read(path string) (Info, error) {
 		info.HeadCountKV = info.HeadCount // multi-head attention
 	}
 	info.KeyLength = int(nums[p+"attention.key_length"])
+	info.ValueLength = int(nums[p+"attention.value_length"])
 	info.EmbeddingLen = int(nums[p+"embedding_length"])
 	info.ContextLength = int(nums[p+"context_length"])
+	info.FileType = int(nums["general.file_type"])
+	info.FileTypeKnown = hasNum(nums, "general.file_type")
 	return info, nil
+}
+
+func coreMetadataReady(strs map[string]string, nums map[string]int64, requireOptional bool) bool {
+	a := strs["general.architecture"]
+	if a == "" {
+		return false
+	}
+	p := a + "."
+	base := nums[p+"block_count"] > 0 && nums[p+"attention.head_count"] > 0 &&
+		(nums[p+"attention.key_length"] > 0 || nums[p+"embedding_length"] > 0)
+	if !base || !requireOptional {
+		return base
+	}
+	return hasNum(nums, p+"attention.head_count_kv") &&
+		hasNum(nums, p+"attention.value_length") &&
+		hasNum(nums, p+"context_length") &&
+		hasNum(nums, "general.file_type")
+}
+
+func metadataBoundary(key string, vtype uint32, strs map[string]string, nums map[string]int64) bool {
+	if !coreMetadataReady(strs, nums, false) {
+		return false
+	}
+	a := strs["general.architecture"]
+	if strings.HasPrefix(key, a+".") {
+		return false
+	}
+	return strings.HasPrefix(key, "tokenizer.") || vtype == 9
+}
+
+func hasNum(m map[string]int64, key string) bool { _, ok := m[key]; return ok }
+
+// Quantization returns the canonical GGUF quant name for common file types.
+func (i Info) Quantization() string {
+	if !i.FileTypeKnown {
+		return ""
+	}
+	// general.file_type uses llama_ftype, not ggml_type. Keep this mapping in
+	// lockstep with llama.cpp/include/llama.h.
+	names := map[int]string{
+		0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 7: "Q8_0", 8: "Q5_0", 9: "Q5_1",
+		10: "Q2_K", 11: "Q3_K_S", 12: "Q3_K_M", 13: "Q3_K_L", 14: "Q4_K_S", 15: "Q4_K_M",
+		16: "Q5_K_S", 17: "Q5_K_M", 18: "Q6_K", 19: "IQ2_XXS", 20: "IQ2_XS", 21: "Q2_K_S",
+		22: "IQ3_XS", 23: "IQ3_XXS", 24: "IQ1_S", 25: "IQ4_NL", 26: "IQ3_S", 27: "IQ3_M",
+		28: "IQ2_S", 29: "IQ2_M", 30: "IQ4_XS", 31: "IQ1_M", 32: "BF16", 36: "TQ1_0",
+		37: "TQ2_0", 38: "MXFP4_MOE", 39: "NVFP4", 40: "Q1_0", 41: "Q2_0",
+	}
+	return names[i.FileType]
 }
 
 // readTopValue reads a metadata value, storing scalars/strings we care about

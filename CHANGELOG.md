@@ -6,6 +6,69 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+This is the launch-shape rewrite around one promise: see why a local LLM ran out
+of accelerator memory and determine what will fit before loading it.
+
+### Breaking
+
+- Replace the exploratory `predict`, `snapshot`, and `devices` commands with the
+  focused `fit`, `report`, and `doctor` workflows. Old names return explicit
+  migration messages and usage status 2.
+
+### Added
+
+- `fit MODEL --quant Q --context N` resolves local/HTTPS GGUFs, Hugging Face
+  repositories, and Ollama registry models without launching them. Remote sources
+  use API/manifest sizes plus a bounded ranged GGUF-header read; sharded Hub files
+  are summed and incomplete/ambiguous/unknown-size inputs fail closed.
+- Conservative `conservative-v1` planning: full-residency weights, exact rational
+  KV-cache widths, expected/runtime-ceiling terms, and a per-device safety margin.
+  It reports separate fits-on-device and fits-right-now verdicts, with unknown
+  current usage kept distinct from zero free memory. A valid non-fit exits 3.
+- Stable JSON envelopes for fit, doctor, and report, all with schema version 1.
+- Explicit provenance across console and JSON: measured `[M]`, loader-reported
+  `[R]`, model-estimated `[E]`, policy-assumed `[A]`, and user-supplied `[U]`.
+- `doctor` checks provider execution, device capacity/current usage, loader health,
+  resident-model GPU evidence, state storage, and optional metadata registries,
+  with layer-specific remediation.
+- A private local prediction ledger. Watch matches predictions to resident models,
+  waits for stable observations, and records signed/absolute prediction error.
+- `report --svg` emits a shareable hardware/model/context/accuracy card. SVG output
+  strips local paths and URL queries, omits host/process identifiers, supports
+  deterministic `--static` rendering, and protects existing files by default.
+- Native Apple-silicon Metal provider using the recommended working-set budget and
+  conservative non-overlapping Mach free/inactive counters, explicitly modelled
+  as unified memory.
+- Native macOS CI/release builds for arm64 and Intel so Metal is linked into shipped
+  binaries; Linux arm64 and Windows/Linux amd64 artifacts remain included.
+- The shell installer verifies release archives against the published SHA-256
+  checksum before extracting them.
+
+### Changed
+
+- GGUF KV metadata now preserves different key and value head dimensions.
+- GGUF `general.file_type` mapping follows the upstream `llama_ftype` enum,
+  including current K/IQ/TQ/BF16 formats. Optional file type is no longer confused
+  with F32.
+- Ollama observations retain quantization, digest, artifact path, and VRAM source
+  for stricter prediction matching. Derived registry tags preserve Ollama's
+  canonical quant spelling (for example `q4_K_M`).
+- Device providers now state whether capacity and current usage were actually
+  measured. `fit` never treats an unavailable usage counter as an empty card.
+
+### Safety and correctness
+
+- All preflight size arithmetic saturates on overflow so hostile metadata cannot
+  wrap into an optimistic fit.
+- Direct URLs must expose the complete artifact size; a partial response's
+  `Content-Length` is never mistaken for total model size.
+- Ranged GGUF responses are parsed incrementally and closed as soon as the
+  architecture is complete; 16 MiB is a ceiling rather than a routine transfer.
+- Prediction IDs are validated before constructing ledger paths, and records are
+  written privately through same-directory temp-file replacement.
+- The exact documented model-first syntax (`fit MODEL --quant ... --context ...`)
+  is covered end to end despite Go's default non-interspersed flag parsing.
+
 ## [0.6.0] - 2026-07-05
 
 Switch the AMD provider from `rocm-smi` to `amd-smi`.

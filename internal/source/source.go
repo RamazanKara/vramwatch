@@ -114,12 +114,13 @@ func (d Demo) Collect(ctx context.Context) ([]model.GPU, []model.LoaderModel, er
 
 	gpu := model.GPU{
 		Index: 0, Name: "AMD Radeon RX 7900 XTX (demo)", Vendor: model.VendorAMD, Driver: "6.7.0",
-		TotalBytes: total, UsedBytes: used, FreeBytes: free,
+		TotalBytes: total, UsedBytes: used, FreeBytes: free, BudgetBytes: total, MemoryKind: model.MemoryDedicated,
+		CapacitySource: model.ProvenanceAssumed, UsageSource: model.ProvenanceAssumed,
 		Procs: []model.Proc{{PID: 4242, Name: "ollama", UsedBytes: vram}},
 	}
 	m := model.LoaderModel{
 		Loader: "ollama", Name: "llama3:8b-demo", PID: 4242, GPUIndex: 0,
-		VRAMBytes: vram, ContextTokens: tokens, ContextMax: 200000, Arch: arch, Estimated: true,
+		VRAMBytes: vram, ContextTokens: tokens, ContextMax: 200000, Arch: arch, Estimated: true, VRAMSource: model.ProvenanceAssumed,
 	}
 	return []model.GPU{gpu}, []model.LoaderModel{m}, nil
 }

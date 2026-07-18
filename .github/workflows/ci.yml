@@ -18,24 +18,21 @@ jobs:
       - run: go test ./... -race
       - run: go build -o vramwatch ./cmd/vramwatch
 
-      - name: OOM scenario is flagged
+      - name: watch smoke test
         run: |
-          ./vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --json > out.json
-          grep -q '"oom_risk": true' out.json
+          VRAMWATCH_STATE_DIR=/tmp/vramwatch-state ./vramwatch watch --source mock:testdata/scenarios/24gb-70b-oom.json --once --no-color > watch.txt
+          grep -q 'OOM risk' watch.txt
+          grep -q '\[M\]' watch.txt
+          grep -q '\[E\]' watch.txt
 
-      - name: healthy scenario is not flagged
+      - name: removed commands explain the migration
         run: |
-          ./vramwatch predict --source mock:testdata/scenarios/16gb-13b-fits.json --json > fit.json
-          grep -q '"oom_risk": false' fit.json
+          if ./vramwatch predict 2> migration.txt; then exit 1; fi
+          grep -q 'use `vramwatch fit MODEL --context N`' migration.txt
 
-      - name: predict rejects an oversized context
+      - name: committed report card is up to date
         run: |
-          ./vramwatch predict --source mock:testdata/scenarios/24gb-70b-oom.json --context 32768 --json > pred.json
-          grep -q '"fits": false' pred.json
-
-      - name: committed sample scorecard is up to date
-        run: |
-          ./vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json --static --svg /tmp/card.svg
+          go run ./tools/reportfixture > /tmp/card.svg
           diff -q /tmp/card.svg docs/sample/vramwatch-card.svg
 
   crosscompile:
@@ -46,8 +43,6 @@ jobs:
           - { goos: linux, goarch: amd64 }
           - { goos: linux, goarch: arm64 }
           - { goos: windows, goarch: amd64 }
-          - { goos: darwin, goarch: amd64 }
-          - { goos: darwin, goarch: arm64 }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -59,3 +54,24 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
         run: go build ./cmd/vramwatch
+
+  macos-native:
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-15-intel, goarch: amd64 }
+          - { runner: macos-15, goarch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: test native Metal build (${{ matrix.goarch }})
+        env:
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "1"
+        run: |
+          go test ./...
+          go build -o vramwatch ./cmd/vramwatch
+          ./vramwatch version

@@ -1,11 +1,36 @@
-# Real-hardware validation
+# Validation status
 
-vramwatch's engine is unit-tested against fixtures, but the numbers below were
-produced by running it against real hardware and a real inference server, then
-cross-checked against independent ground truth. This page records what has been
-validated on hardware so far. Paths that are implemented and fixture-tested but not
-yet run on native hardware (NVIDIA, AMD-on-Linux) are listed under "Awaiting field
-reports" below.
+Validation has two layers. Hardware-free contract tests cover bounded remote GGUF
+resolution, sharded-size accounting, quant selection, exact KV arithmetic,
+overflow fail-closed behavior, current-vs-capacity verdicts, local ledger pairing,
+privacy-safe SVG rendering, and all vendor/loader parsers. The measurements below
+were also produced on real hardware and cross-checked against independent ground
+truth.
+
+The new `conservative-v1` preflight policy still needs a broad public accuracy
+corpus across backends, model families, and drivers. The local prediction ledger
+and `report` accuracy card exist specifically to make those field results
+comparable without telemetry.
+
+## Live registry metadata smoke, 2026-07-18
+
+The documented model-first command was run against both live metadata paths with
+an 8 GiB manual target and no local model download:
+
+```sh
+vramwatch fit ollama:llama3.2:3b-instruct --quant q4_k_m --context 32768 --vram 8GiB --no-record --json
+vramwatch fit hf:bartowski/Llama-3.2-1B-Instruct-GGUF --quant q4_k_m --context 32768 --vram 8GiB --no-record --json
+```
+
+- Ollama resolved `llama3.2:3b-instruct-q4_K_M`, a 2,019,377,376-byte model
+  layer, after 3,914 metadata bytes. Its manifest digest matched Ollama's running
+  model identity, and the ranged GGUF header recovered 28 layers and 8 KV heads.
+- Hugging Face resolved the pinned `Llama-3.2-1B-Instruct-Q4_K_M.gguf`, an
+  807,694,464-byte artifact, after 29,468 metadata bytes and recovered 8 KV heads.
+
+Both returned `fits` for the manual target. The byte counts prove the incremental
+range reader stopped after architecture metadata rather than consuming the model
+artifact; its enforced ceiling remains 16 MiB for unusually large headers.
 
 ## AMD Radeon RX 7900 XT + Ollama, Windows 11
 
@@ -30,9 +55,11 @@ Total was 19.98 GiB, matching the registry `qwMemorySize` (`0x4ff000000`).
 
 With `qwen2.5:0.5b` resident on the GPU, Ollama's `/api/ps` reported
 `size_vram = 459 MB`. vramwatch reads the model's GGUF blob (via the path in
-`/api/show`) for a measured weight size, and splits that footprint as:
+`/api/show`) for the exact GGUF file size used as estimated residency, and splits
+that footprint as:
 
-- weights **379.4 MiB** (the real GGUF blob size) + KV cache **48 MiB** + compute
+- weights **379.4 MiB** (GGUF blob size, treated as estimated full-offload
+  residency) + KV cache **48 MiB** + compute
   **32.1 MiB** = **459.5 MiB ≈ 459 MB**. The split sums to Ollama's own reported
   VRAM, with the compute/scratch VRAM correctly separated from the weights.
 
@@ -60,8 +87,8 @@ This exercises a completely different code path from Ollama: vramwatch reads
 directly** for the architecture and weight size (the Ollama path gets those from
 `/api/show` instead). Both reached the same answer:
 
-- weights **379.4 MiB**, which is the GGUF file's actual size on disk (379 MB) read
-  straight from the file.
+- weights **379.4 MiB**, the GGUF file's actual size on disk (379 MB), used as an
+  estimated full-offload residency value.
 - KV cache **48 MiB** at ctx 4096, i.e. the same 12 KiB/token the Ollama run
   produced, because the GGUF parser recovered the same arch (24 layers, 2 KV heads,
   head_dim 64) that `/api/show` reported.
@@ -88,6 +115,10 @@ validation step:
   memory keys. Validating this path needs native Linux on AMD (bare metal or PCI
   passthrough), not WSL.
 - Multiple GPUs, and a range of drivers.
+- Apple silicon unified memory through the native Metal provider.
+- Preflight expected-footprint error across Ollama/llama.cpp backends and larger
+  context windows. Share `vramwatch report --svg` cards or scrubbed JSON when
+  filing these results.
 
 If you run vramwatch on your hardware, posting the result (and any mismatch) is the
 most useful contribution. See the issues link in the README.

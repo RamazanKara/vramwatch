@@ -1,6 +1,5 @@
-// Command vramwatch live-traces where every megabyte of your local-LLM VRAM
-// went (weights vs KV cache vs other apps) and predicts how much context
-// fits before you run out of memory.
+// Command vramwatch explains local-LLM accelerator memory and predicts what
+// fits before a model is downloaded or loaded.
 package main
 
 import (
@@ -14,33 +13,29 @@ import (
 // Version is set at build time via -ldflags "-X main.Version=...".
 var Version = "dev"
 
-const usage = `vramwatch: the flame graph for "why won't this model fit"
+const usage = `vramwatch — see why your local LLM ran out of GPU memory and determine what will fit before loading it.
 
 USAGE
   vramwatch <command> [flags]
 
 COMMANDS
-  watch      Live TUI: a stacked VRAM bar that updates as the KV cache grows
-  snapshot   One-shot breakdown (console, --json, or --svg scorecard)
-  predict    Will a target context fit? What's the max context before OOM?
-  devices    List detected GPUs and inference loaders (diagnostics)
+  fit        Predict whether a model + quant + context fits before downloading it
+  watch      Live VRAM attribution with explicit measured/estimated provenance
+  doctor     Diagnose drivers, runtimes, loaders, permissions, and GPU detection
+  report     One-shot console/JSON report or privacy-safe SVG accuracy card
   version    Print version information
   help       Show this help
 
 COMMON FLAGS
-  --source <spec>       Data source: "live" (default), "demo", "mock:PATH", or a .json path
-  --kv-cache-type <t>   KV cache dtype for an accurate estimate: f16|bf16|f32|q8_0|q5_0|q4_0
-                        (or set $VRAMWATCH_KV_CACHE_TYPE)
   --no-color            Disable ANSI colour   (also honours NO_COLOR)
   --color               Force ANSI colour even when not a TTY
 
 EXAMPLES
+  vramwatch fit ollama:llama3.2:3b-instruct --quant q4_k_m --context 32768
+  vramwatch fit hf:bartowski/Llama-3.2-1B-Instruct-GGUF --quant q4_k_m --context 32768
   vramwatch watch
-  vramwatch watch --kv-cache-type q8_0
-  vramwatch snapshot --json
-  vramwatch snapshot --svg card.svg
-  vramwatch predict --context 32768
-  vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json
+  vramwatch doctor
+  vramwatch report --svg
 
 Docs:        https://github.com/RamazanKara/vramwatch
 Methodology: https://github.com/RamazanKara/vramwatch/blob/master/docs/METHODOLOGY.md
@@ -59,14 +54,20 @@ func main() {
 
 	var err error
 	switch cmd {
+	case "fit":
+		err = cmdFit(args)
 	case "watch":
 		err = cmdWatch(args)
-	case "snapshot", "report", "snap":
-		err = cmdSnapshot(args)
+	case "doctor":
+		err = cmdDoctor(args)
+	case "report":
+		err = cmdReport(args)
 	case "predict":
-		err = cmdPredict(args)
+		err = &usageError{fmt.Errorf("command predict was removed; use `vramwatch fit MODEL --context N`")}
+	case "snapshot", "snap":
+		err = &usageError{fmt.Errorf("command snapshot was removed; use `vramwatch report`")}
 	case "devices", "detect":
-		err = cmdDevices(args)
+		err = &usageError{fmt.Errorf("command devices was removed; use `vramwatch doctor`")}
 	case "version", "--version", "-v":
 		printVersion()
 	case "help", "-h", "--help":
@@ -81,9 +82,17 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
+		var ee *exitError
+		if errors.As(err, &ee) {
+			if !ee.quiet && ee.err != nil {
+				fmt.Fprintln(os.Stderr, "vramwatch:", ee.err)
+			}
+			os.Exit(ee.code)
+		}
 		// Usage errors (bad flags) exit 2; flag already printed the message.
 		var ue *usageError
 		if errors.As(err, &ue) {
+			fmt.Fprintln(os.Stderr, "vramwatch:", ue)
 			os.Exit(2)
 		}
 		fmt.Fprintln(os.Stderr, "vramwatch:", err)

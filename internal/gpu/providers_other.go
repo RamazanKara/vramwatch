@@ -1,6 +1,6 @@
-//go:build !windows
+//go:build !windows && !darwin
 
 package gpu
 
-// platformProviders adds OS-specific GPU providers. Only Windows has one today.
+// This platform has no additional provider beyond the vendor command-line tools.
 func platformProviders() []Provider { return nil }
