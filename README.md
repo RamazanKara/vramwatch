@@ -1,77 +1,138 @@
 <h1 align="center">vramwatch</h1>
 
-<p align="center"><em>The flame graph for “why won’t this model fit.”</em></p>
-
-<p align="center">
-  A single, dependency-free binary that live-traces where every megabyte of your
-  local-LLM VRAM went (<strong>weights vs KV cache vs other apps</strong>) and
-  predicts how much context fits before you OOM.
-</p>
+<p align="center"><strong>vramwatch — see why your local LLM ran out of GPU memory and determine what will fit before loading it.</strong></p>
 
 <p align="center">
   <a href="https://github.com/RamazanKara/vramwatch/actions/workflows/ci.yml"><img src="https://github.com/RamazanKara/vramwatch/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://github.com/RamazanKara/vramwatch/releases"><img src="https://img.shields.io/github/v/release/RamazanKara/vramwatch?sort=semver" alt="Release"></a>
-  <img src="https://img.shields.io/badge/deps-0-brightgreen" alt="Zero dependencies">
+  <img src="https://img.shields.io/badge/Go_dependencies-0-brightgreen" alt="Zero Go dependencies">
 </p>
 
-<p align="center"><img src="docs/demo.gif" alt="vramwatch watching the KV cache grow until OOM" width="720"></p>
+`nvidia-smi` and `amd-smi` can show that a card is full. vramwatch answers the
+next questions: *why* is it full, and will this model, quantization, and context
+fit before you spend time downloading or launching it?
 
----
-
-`nvidia-smi` and `amd-smi` tell you a GPU is using 23.5 of 24 GiB. They can’t tell
-you why: how much is model weights, how much is the KV cache that grows with
-your context, and how much is the desktop compositor you forgot about. So when a
-70B model that “should fit” OOMs at 22 GiB, you’re guessing.
-
-vramwatch attributes VRAM inside the inference process and shows you the split
-live:
-
-```text
-vramwatch v0.6.0
-
-GPU 0  AMD Radeon RX 7900 XTX  (amd, driver 6.7.0)
-[███████████████████████████████████████████████]  23.75 GiB / 24.00 GiB used
-  █ weights      19.50 GiB   81.2%  (ollama, estimated)
-  █ KV cache      2.50 GiB   10.4%  (ollama, estimated)
-  █ other apps    1.75 GiB    7.3%
-  █ free         256.0 MiB    1.0%
-  model: llama3:70b-q2_K  ctx 8192/8192
-  ⚠ OOM risk: headroom 256.0 MiB • ~320.0 KiB/token • max context ≈ 8,192 tokens
+```sh
+vramwatch fit ollama:llama3.2:3b-instruct --quant q4_k_m --context 32768
+vramwatch watch
+vramwatch doctor
+vramwatch report --svg
 ```
 
-## Why vramwatch
+## The four commands
 
-- **Within-process attribution.** Of the 22 GiB a process is using, it shows that
-  19.5 is weights and 2.5 is KV cache. That’s the number that tells you whether a
-  longer context or a bigger quant will fit.
-- **OOM prediction.** It knows your model’s KV-cache growth per token, so it tells
-  you the max context that fits and answers “will 32k fit?” before you try it.
-- **Quantized-KV aware.** Running a `q8_0`/`q4_0` KV cache? Pass `--kv-cache-type`
-  and the estimate tracks it (conservatively) instead of being 2–4× too high.
-- **AMD/ROCm is a peer, not an afterthought.** Most VRAM tooling is CUDA-only.
-  vramwatch does the same weights/KV split on both, and gets AMD per-process
-  VRAM on Linux via the kernel’s DRM `fdinfo`.
-- **Zero friction, zero deps.** One static binary. No Python, no CUDA toolkit, no
-  account, nothing uploaded. `curl | sh` and go.
-- **Honest.** Anything derived rather than measured is labelled `estimated`, and the
-  method is [documented in full](docs/METHODOLOGY.md).
+### `vramwatch fit MODEL --quant q4_k_m --context 32768`
 
-## vramwatch vs. the usual tools
+Resolves a GGUF's size and architecture, computes weights + KV cache + runtime
+overhead, then evaluates every detected accelerator independently. Remote models
+use repository metadata and a bounded HTTP range request for the GGUF header.
+The response is closed as soon as the required metadata is parsed; 16 MiB is a
+hard transfer ceiling, not the routine read size. Servers that would force a
+larger un-ranged response are refused.
 
-|                                   | vramwatch | `nvidia-smi` | `nvtop` / `nvitop` |
-|-----------------------------------|:---:|:---:|:---:|
-| Device total / used / free        | ✅ | ✅ | ✅ |
-| Per-process VRAM                  | ✅ (NVIDIA) | ✅ | ✅ |
-| **Weights vs KV-cache split**     | ✅ | ❌ | ❌ |
-| **Max context before OOM**        | ✅ | ❌ | ❌ |
-| **“Will 32k context fit?”**       | ✅ | ❌ | ❌ |
-| Shareable SVG scorecard           | ✅ | ❌ | ❌ |
-| AMD / ROCm                        | ✅ | ❌ | ✅ (nvtop) |
-| Single static binary, no Python   | ✅ | n/a | ❌ (nvitop) |
+`MODEL` accepts:
 
-vramwatch doesn’t replace `nvtop` for live GPU utilisation graphs. It answers the
-one question those tools can’t: *what is my model actually spending VRAM on?*
+| Form | Example |
+|---|---|
+| Ollama registry | `ollama:llama3.2:3b-instruct` |
+| Hugging Face | `hf:owner/repo` or `owner/repo` |
+| Local GGUF | `/models/model-Q4_K_M.gguf` |
+| HTTPS GGUF | `https://example/model-Q4_K_M.gguf` |
+
+Useful flags:
+
+```sh
+vramwatch fit hf:owner/repo --quant q4_k_m --context 32768
+vramwatch fit hf:owner/repo --file model-Q4_K_M.gguf --revision main --context 32768
+vramwatch fit ./model.gguf --context 32768 --kv-cache-type q8_0
+vramwatch fit ./model.gguf --context 32768 --vram 24GiB   # plan without detected hardware
+vramwatch fit ./model.gguf --context 32768 --json
+```
+
+The answer has two intentionally different verdicts:
+
+- `on device` compares the full model against accelerator capacity.
+- `right now` also accounts for memory currently in use. If live usage could not
+  be measured, this verdict is `UNKNOWN` instead of assuming the card is empty.
+
+Fit is conservative. It assumes full single-accelerator residency, adds a runtime
+ceiling, and reserves `max(512 MiB, 5% of capacity)`. The output exposes every
+component and its provenance. Exit status is `0` if at least one target fits,
+`3` when a valid prediction says none fit, and `1` when the answer is
+indeterminate or an operational check fails.
+
+Private Hugging Face repositories are supported through `HF_TOKEN`. Sharded GGUF
+sizes are summed and incomplete shard sets are rejected.
+
+### `vramwatch watch`
+
+Shows the live device bar and attributes the inference footprint into weights,
+KV cache, compute/runtime, other processes, and free memory. Values carry a badge
+so a derived number never looks like a measurement:
+
+| Badge | Meaning |
+|---|---|
+| `[M]` | measured by the driver or OS |
+| `[R]` | reported by Ollama or llama.cpp |
+| `[E]` | estimated from model metadata/math |
+| `[A]` | conservative policy assumption |
+| `[U]` | supplied by the user |
+
+```sh
+vramwatch watch
+vramwatch watch --kv-cache-type q8_0
+vramwatch watch --once --no-color
+```
+
+When a resident model matches a saved fit prediction, watch displays predicted
+versus observed memory. After three stable samples (within 2%), it records the
+observation locally for the accuracy report.
+
+For demos and provider development, `watch --source demo` and
+`watch --source mock:scenario.json` remain available.
+
+### `vramwatch doctor`
+
+Checks the whole detection chain rather than merely looking for an executable:
+
+- driver/provider availability and query failures;
+- accelerator identity, capacity, and whether current usage is measurable;
+- Ollama and llama.cpp health plus resident models;
+- evidence that a resident model is actually using GPU memory;
+- prediction-ledger state; and
+- optionally, metadata registry reachability with `--online`.
+
+```sh
+vramwatch doctor
+vramwatch doctor --verbose
+vramwatch doctor --online --json
+```
+
+Failures include a targeted remediation and return status `1`. Warnings (for
+example, a healthy loader with no resident model) do not turn a diagnostic run
+into a failure.
+
+### `vramwatch report --svg`
+
+Every `fit` invocation saves a small local prediction record unless `--no-record`
+is used. `watch` or a later `report` pairs it with a matching resident model and
+records the measured or loader-reported footprint. The report shows hardware,
+model, quant, context, prediction, observation provenance, and signed/absolute
+error.
+
+```sh
+vramwatch report                         # latest prediction, console
+vramwatch report --prediction ID --json
+vramwatch report --svg                   # timestamped SVG filename
+vramwatch report --svg --output card.svg
+```
+
+The SVG is designed to share: it omits hostnames, PIDs, bus IDs, serial numbers,
+local paths, and URL query strings. `--static` removes the timestamp for
+reproducible output. Existing files are protected unless `--force` is supplied.
+
+<p align="center"><img src="docs/sample/vramwatch-card.svg" alt="vramwatch prediction accuracy report" width="680"></p>
 
 ## Install
 
@@ -79,194 +140,117 @@ one question those tools can’t: *what is my model actually spending VRAM on?*
 # Linux / macOS
 curl -fsSL https://raw.githubusercontent.com/RamazanKara/vramwatch/master/install.sh | sh
 
-# With Go
+# Or with Go
 go install github.com/RamazanKara/vramwatch/cmd/vramwatch@latest
 ```
 
-Windows: grab the `.zip` from [Releases](https://github.com/RamazanKara/vramwatch/releases),
-or `go install` as above.
+Windows users can download the `.zip` from
+[Releases](https://github.com/RamazanKara/vramwatch/releases) or use `go install`.
+Release binaries are produced for Linux amd64/arm64, Windows amd64, and macOS
+amd64/arm64. macOS artifacts are built natively with the system Metal framework.
 
-## Usage
+## What is supported
 
-```sh
-vramwatch watch                      # live TUI (updates as the KV cache grows)
-vramwatch snapshot                   # one-shot breakdown
-vramwatch snapshot --json            # machine-readable
-vramwatch snapshot --svg card.svg    # branded scorecard to share
-vramwatch predict --context 32768    # will 32k context fit? what's the max?
-vramwatch devices                    # what GPUs/loaders did I detect?
-```
+| Hardware path | Capacity/usage | Per-process evidence | Notes |
+|---|:---:|:---:|---|
+| NVIDIA via `nvidia-smi` | yes | yes | Linux and Windows |
+| AMD via `amd-smi` | yes | Linux: `/proc/*/fdinfo` | ROCm/AMD SMI path |
+| AMD on Windows via registry + `typeperf` | yes | no | usage is unknown on ambiguous multi-GPU systems |
+| Apple silicon via Metal + Mach VM | unified-memory budget | no | uses Metal's recommended working set and reclaimable system memory |
+| Manual `--vram` target | user supplied | n/a | prediction works without a GPU |
 
-Running a quantized KV cache (Ollama `OLLAMA_KV_CACHE_TYPE`, llama.cpp `--cache-type-k`)?
-Tell vramwatch so the estimate matches:
+| Loader | Resident model discovery | Architecture/weights |
+|---|:---:|:---:|
+| Ollama | `/api/ps` | `/api/show` plus local GGUF blob when readable |
+| llama.cpp server | `/props` | local GGUF header when the server is on loopback |
 
-```sh
-vramwatch watch --kv-cache-type q8_0        # or export VRAMWATCH_KV_CACHE_TYPE=q8_0
-```
+Fit does not require a running loader. Ollama and Hugging Face are model metadata
+sources; `--loader` records which runtime you intend to use so a later observation
+can be matched.
 
-No GPU handy? Every command takes `--source`:
+## How prediction works
 
-```sh
-vramwatch watch --source demo   # synthetic card whose KV cache grows until OOM
-vramwatch snapshot --source mock:testdata/scenarios/24gb-70b-oom.json
-```
-
-`snapshot --svg` writes a shareable scorecard:
-
-<p align="center"><img src="docs/sample/vramwatch-card.svg" alt="vramwatch SVG scorecard" width="640"></p>
-
-### `predict`
+The KV cache is computed from architecture metadata, including grouped-query and
+asymmetric key/value dimensions:
 
 ```text
-$ vramwatch predict --context 32768
-GPU 0  AMD Radeon RX 7900 XTX
-  model: llama3:70b-q2_K   ~320.0 KiB/token
-  headroom: 256.0 MiB
-  max context that fits: ~8,192 tokens   (OOM risk now)
-  target 32,768 tokens: WON'T FIT (needs 29.50 GiB, card has 24.00 GiB)
+KV bytes = context × layers × KV heads × (key dimension + value dimension) × element width
 ```
 
-## How it works
+The preflight policy then uses:
 
-vramwatch combines two sources per GPU:
-
-1. **The driver / OS.** Device total/used/free from `nvidia-smi`, `amd-smi`, or
-   (on Windows) the registry + `GPU Adapter Memory` performance counter. Plus
-   per-process VRAM from `nvidia-smi` (NVIDIA) or `/proc/<pid>/fdinfo` (AMD/Linux).
-   This is ground truth.
-2. **The loader.** Which models are resident and their architecture:
-   - **Ollama** via `/api/ps` (VRAM) + `/api/show` (architecture).
-   - **llama.cpp** via `/props` (context), plus reading the GGUF file’s header
-     directly for the architecture and weight size.
-
-It then splits the inference process’s footprint. The KV cache is computed with the
-standard formula:
-
-```
-KV bytes/token = 2 (K and V) · n_layers · n_kv_heads · head_dim · bytes_per_element
+```text
+expected      = GGUF bytes + KV bytes + max(64 MiB, 10% of weights)
+conservative  = GGUF bytes + KV bytes + max(256 MiB, 15% of weights)
+required      = conservative + max(512 MiB, 5% of accelerator capacity)
 ```
 
-which is GQA/MQA-aware (`n_kv_heads`) and dtype-aware (`bytes_per_element`, set by
-`--kv-cache-type`). The segments always tile the device exactly:
-weights + KV + compute + other apps + free = total.
+GGUF bytes are treated as estimated GPU-resident weights because this assumes
+full offload. The runtime terms and safety reserve are assumptions, clearly marked
+`[A]`. See [the methodology](docs/METHODOLOGY.md) for exact arithmetic, cache
+quantization widths, guardrails, and a worked example.
 
-The full method, including a worked example and exactly what’s measured vs.
-estimated, is in [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
+## Local data and network behavior
 
-## Accuracy: measured vs. estimated
+There is no account, telemetry, or upload service. Prediction records are JSON
+files under the platform state directory:
 
-| Figure | How it’s obtained | Trust |
-|--------|-------------------|-------|
-| Device total / used / free | Driver (`nvidia-smi`/`amd-smi`) | measured |
-| Per-process VRAM (NVIDIA) | Driver compute-apps query | measured |
-| KV cache | `arch × context × dtype` (formula) | **estimated**; exact at f16/bf16/f32, conservative (rounded up) for a quantized cache |
-| Weights (Ollama) | `process VRAM − KV` | **estimated** |
-| Weights (llama.cpp) | GGUF file size | **estimated** (assumes full GPU offload) |
-| Max context before OOM | `free ÷ KV-bytes-per-token` | **estimated**, linear |
+- Linux: `$XDG_STATE_HOME/vramwatch` or `~/.local/state/vramwatch`
+- macOS: `~/Library/Application Support/vramwatch`
+- Windows: `%LOCALAPPDATA%\vramwatch`
 
-Everything in the estimated rows is labelled `estimated` in the output. See the
-[FAQ](docs/FAQ.md) if your numbers don’t match what you expect.
+Set `VRAMWATCH_STATE_DIR` to override this location. Records can include the model
+reference you supplied, including a local path or URL; they stay local. SVG output
+is scrubbed as described above. Raw `report --json` is intended for local
+automation and is not privacy-scrubbed.
 
-## Supported
-
-| GPU vendor | via                                   | device totals | per-process | notes |
-|------------|---------------------------------------|:---:|:---:|-------|
-| NVIDIA     | `nvidia-smi`                          | ✅ | ✅ | full support |
-| AMD (Linux)| `amd-smi` + `/proc` fdinfo            | ✅ | ✅ | device totals via `amd-smi`, per-process via the DRM `fdinfo` interface; field reports welcome |
-| AMD (Windows)| registry + `typeperf` GPU counters  | ✅ | n/a | device totals; per-process is a roadmap item |
-
-On Windows, where AMD's consumer driver doesn't ship `amd-smi`, vramwatch reads
-the real VRAM size from the registry and usage from the built-in `GPU Adapter
-Memory` performance counter (`typeperf`), so an AMD card is detected with no extra
-tooling. This was validated against a real Radeon RX 7900 XT (numbers match the
-registry and the counter exactly). Discrete Intel Arc cards go through the same
-Windows path but are untested; integrated GPUs (no dedicated VRAM) aren't detected,
-and on a multi-GPU box usage is left unattributed rather than guessed. Per-process
-VRAM on NVIDIA comes from `nvidia-smi`, and on AMD/Linux from `/proc/<pid>/fdinfo`;
-it lets vramwatch use the *real* process footprint instead of the loader's self-report.
-
-| Loader   | via                       | model + VRAM | weights/KV split |
-|----------|---------------------------|:---:|:---:|
-| Ollama   | `/api/ps`, `/api/show`    | ✅ | ✅ (arch from the API) |
-| llama.cpp| `/props` + GGUF header    | ✅ (from GGUF) | ✅ (arch + weights from the GGUF file) |
+Live watch/doctor talk only to local drivers and loader endpoints. Remote `fit`
+contacts the selected Hugging Face or Ollama registry for metadata;
+`doctor --online` performs explicit registry probes.
 
 ## Limitations
 
-vramwatch is deliberately honest about what it can and can’t know:
+- Fit models assume full residency on one accelerator. Tensor splitting, CPU/partial
+  offload, speculative/draft models, adapters, and multimodel concurrency are not
+  yet predicted.
+- Separate Hugging Face multimodal projector files are not yet added to model
+  weight totals; select the main GGUF explicitly with `--file`.
+- Runtime allocator behavior varies by backend and driver. The conservative policy
+  is a planning guardrail, not a guarantee against fragmentation or another process
+  allocating after the sample.
+- KV cache type defaults to f16. Pass `--kv-cache-type` when your loader uses a
+  quantized cache.
+- Prediction accuracy is recorded only when model identity, quant, and context can
+  be matched unambiguously and exactly one model is resident on the device.
+- Apple unified memory is not dedicated VRAM. vramwatch reports the Metal working
+  set budget and currently reclaimable memory, and labels the memory kind explicitly.
 
-- **Weights/KV are estimated, not allocator-hooked.** vramwatch does not intercept the
-  CUDA/HIP allocator; it derives the split from the loader’s reported footprint (or
-  the GGUF file) plus the model architecture. The KV formula is exact for an
-  unquantized cache and a small conservative over-estimate for a quantized one;
-  weights are the remainder (Ollama) or the file size (llama.cpp).
-- **KV dtype defaults to f16.** vramwatch can’t read the loader’s cache-type setting,
-  so pass `--kv-cache-type q8_0` (or set `VRAMWATCH_KV_CACHE_TYPE`) if you quantized
-  it. Quantized widths are rounded up for the per-block scale, so the figure is a
-  small conservative over-estimate rather than 2–4× too low.
-- **llama.cpp weights assume full GPU offload.** The GGUF file size ≈ VRAM weights
-  only when every layer is on the GPU; with partial offload it over-reports weights.
-- **AMD per-process VRAM is Linux-only** (via `/proc` DRM `fdinfo`), and only for
-  processes you can read. A loader running under a different user (e.g. a system
-  service) won’t be visible, and vramwatch falls back to the loader’s reported VRAM.
-  On Windows, vramwatch reports the AMD device total/used/free but not
-  per-process (the Windows per-process GPU counter over-reports shared memory, so
-  it isn’t trustworthy for the split); the footprint uses the loader’s reported VRAM.
-- **Prediction is linear** in the KV cache and holds weights/overhead constant. It’s a
-  good planning estimate, not a guarantee.
+## Migration from 0.x
 
-**Roadmap:** allocator-level attribution, KV-dtype auto-detection, an Intel GPU
-provider (the `fdinfo` reader already handles i915), reliable AMD per-process on
-Windows, partial-offload awareness, and vLLM / MLX / Apple-Metal providers.
+The launch CLI intentionally replaces the exploratory command names:
 
-## Feature status
+| Removed | Replacement |
+|---|---|
+| `predict` | `fit MODEL --context N` |
+| `snapshot` | `report` |
+| `devices` | `doctor` |
 
-vramwatch is feature-complete: every planned GPU vendor (NVIDIA, AMD) and loader
-(Ollama, llama.cpp) is implemented, and the whole attribution engine is covered by
-fixture tests. The tool is still `0.x` because the CLI and JSON shapes can change
-as field reports come in, but the capabilities themselves are shipped:
+Invoking an old name returns a migration message and usage status `2`.
 
-- [x] **AMD on Windows — validated on real hardware.** AMD Radeon RX 7900 XT with
-      **Ollama**: device total/used match the registry + GPU perf counter exactly,
-      the weights/KV split sums to Ollama's reported VRAM, and the KV cache grew
-      exactly 4× with 4× context (matching the model's real GQA arch). See
-      [docs/VALIDATION.md](docs/VALIDATION.md).
-- [x] **Loaders — validated on real hardware.** Ollama (0.31.1) and llama.cpp
-      (b9873, a real GGUF via Vulkan) both confirmed on real hardware, agreeing on
-      the same model's split via independent code paths (`/api/show` vs. direct GGUF
-      parsing).
-- [x] **NVIDIA and AMD-on-Linux — implemented and fixture-tested.** The `nvidia-smi`
-      path and the `amd-smi` + `/proc/<pid>/fdinfo` path are shipped and exercised
-      against captured fixtures; they haven't yet been run on native hardware here,
-      so field reports from those setups are especially welcome.
-- [x] **Stable machine-readable output.** A golden test pins the exact `--json`
-      output, so an accidental schema change fails CI.
-- [x] **Measured weights.** Weights are read from the model's GGUF file (both
-      loaders) rather than left as a `footprint − KV` remainder, and compute VRAM is
-      separated out. Allocator-level attribution of the remaining footprint is a
-      roadmap item.
-
-Run it on your rig and [hardware results and bug reports](https://github.com/RamazanKara/vramwatch/issues)
-are the most useful thing you can send — especially from NVIDIA and native
-Linux+AMD, where community field reports fill in for hardware we haven't run on
-ourselves yet.
-
-## Docs
-
-- [Methodology](docs/METHODOLOGY.md): the attribution model and KV math in depth.
-- [Validation](docs/VALIDATION.md): real-hardware results cross-checked vs. ground truth.
-- [FAQ](docs/FAQ.md): “why estimated?”, “my numbers don’t match `nvidia-smi`”, etc.
-- [Contributing](CONTRIBUTING.md): adding GPU/loader providers.
-
-## Building
+## Development
 
 ```sh
-make build     # -> ./vramwatch
+make build
 make test
-make card      # regenerate the sample scorecard
-make gif       # regenerate the demo GIF
+make vet
+make card   # regenerate the deterministic SVG above
 ```
 
-No third-party dependencies; standard library only.
+The project has no third-party Go dependencies. Provider parsing, prediction,
+ledger persistence, privacy behavior, report rendering, and the documented
+model-first fit invocation are covered by hardware-free tests. See
+[Contributing](CONTRIBUTING.md), [Validation](docs/VALIDATION.md), and the
+[FAQ](docs/FAQ.md).
 
 ## License
 

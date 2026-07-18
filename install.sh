@@ -41,15 +41,30 @@ fi
 
 asset="vramwatch_${tag}_${os}_${arch}.tar.gz"
 url="https://github.com/$REPO/releases/download/$tag/$asset"
+checksums_url="https://github.com/$REPO/releases/download/$tag/checksums.txt"
 say "downloading $asset ..."
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 if have curl; then
   curl -fsSL "$url" -o "$tmp/$asset" || die "download failed: $url"
+  curl -fsSL "$checksums_url" -o "$tmp/checksums.txt" || die "checksum download failed: $checksums_url"
 else
   wget -qO "$tmp/$asset" "$url" || die "download failed: $url"
+  wget -qO "$tmp/checksums.txt" "$checksums_url" || die "checksum download failed: $checksums_url"
 fi
+
+expected="$(awk -v file="$asset" '$2 == file { print $1; exit }' "$tmp/checksums.txt")"
+[ -n "$expected" ] || die "$asset is missing from checksums.txt"
+if have sha256sum; then
+  actual="$(sha256sum "$tmp/$asset" | awk '{ print $1 }')"
+elif have shasum; then
+  actual="$(shasum -a 256 "$tmp/$asset" | awk '{ print $1 }')"
+else
+  die "need sha256sum or shasum to verify the release"
+fi
+[ "$actual" = "$expected" ] || die "checksum mismatch for $asset"
+say "checksum verified"
 
 tar -xzf "$tmp/$asset" -C "$tmp" vramwatch || die "extract failed"
 

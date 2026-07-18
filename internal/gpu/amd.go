@@ -66,7 +66,7 @@ func parseAMDSMI(staticJSON, metricJSON string) ([]model.GPU, error) {
 		if !ok {
 			continue // not a per-GPU element
 		}
-		u := usage[idx] // zero value if this GPU had no metric entry
+		u, usageKnown := usage[idx] // zero value if this GPU had no metric entry
 
 		total := u.total
 		if total == 0 {
@@ -98,15 +98,23 @@ func parseAMDSMI(staticJSON, metricJSON string) ([]model.GPU, error) {
 		if name == "" {
 			name = "AMD GPU " + strconv.Itoa(idx)
 		}
+		usageSource := model.ProvenanceAssumed
+		if usageKnown {
+			usageSource = model.ProvenanceMeasured
+		}
 		gpus = append(gpus, model.GPU{
-			Index:      idx,
-			Name:       name,
-			Vendor:     model.VendorAMD,
-			Driver:     driver,
-			PCIBus:     amdBlockString(el["bus"], "bdf"),
-			TotalBytes: total,
-			UsedBytes:  used,
-			FreeBytes:  free,
+			Index:          idx,
+			Name:           name,
+			Vendor:         model.VendorAMD,
+			Driver:         driver,
+			PCIBus:         amdBlockString(el["bus"], "bdf"),
+			TotalBytes:     total,
+			UsedBytes:      used,
+			FreeBytes:      free,
+			MemoryKind:     model.MemoryDedicated,
+			BudgetBytes:    total,
+			CapacitySource: model.ProvenanceMeasured,
+			UsageSource:    usageSource,
 		})
 	}
 	sort.Slice(gpus, func(i, j int) bool { return gpus[i].Index < gpus[j].Index })
@@ -133,11 +141,15 @@ func parseAMDMetric(metricJSON string) map[int]amdUsage {
 		if json.Unmarshal(el["mem_usage"], &mem) != nil {
 			continue // mem_usage absent or collapsed to the string "N/A"
 		}
-		out[idx] = amdUsage{
+		u := amdUsage{
 			total: amdBytes(mem["total_vram"]),
 			used:  amdBytes(mem["used_vram"]),
 			free:  amdBytes(mem["free_vram"]),
 		}
+		if u.total == 0 && u.used == 0 && u.free == 0 {
+			continue
+		}
+		out[idx] = u
 	}
 	return out
 }

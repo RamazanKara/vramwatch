@@ -7,7 +7,7 @@ body:
     attributes:
       label: What happened
       description: What did you run, and what was wrong with the output?
-      placeholder: "vramwatch snapshot showed weights as 0 GiB even though a model is loaded"
+      placeholder: "vramwatch fit said the model would fit, but the loader ran out of GPU memory"
     validations:
       required: true
   - type: input
@@ -25,9 +25,9 @@ body:
   - type: textarea
     id: output
     attributes:
-      label: Output of `vramwatch snapshot --json`
-      description: This is the most useful thing you can paste. Redact anything sensitive.
-      render: json
+      label: Relevant output + `vramwatch doctor --json`
+      description: Paste the fit, watch, or report output and the doctor JSON. Redact paths or model names if needed.
+      render: shell
   - type: input
     id: version
     attributes:

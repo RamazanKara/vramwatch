@@ -42,12 +42,36 @@ const (
 
 // Segment is one accounted slice of a GPU's VRAM.
 type Segment struct {
-	Kind      SegmentKind `json:"kind"`
-	Label     string      `json:"label"`
-	Bytes     uint64      `json:"bytes"`
-	Source    string      `json:"source"`              // provider/method that produced this figure
-	Estimated bool        `json:"estimated,omitempty"` // true when derived rather than reported
+	Kind       SegmentKind `json:"kind"`
+	Label      string      `json:"label"`
+	Bytes      uint64      `json:"bytes"`
+	Source     string      `json:"source"`              // provider/method that produced this figure
+	Estimated  bool        `json:"estimated,omitempty"` // true when derived rather than reported
+	Provenance Provenance  `json:"provenance,omitempty"`
 }
+
+// Provenance describes how a displayed value was obtained. A loader report is
+// kept distinct from a direct driver/OS measurement, and neither is confused
+// with model math or a policy assumption.
+type Provenance string
+
+const (
+	ProvenanceMeasured  Provenance = "measured"
+	ProvenanceReported  Provenance = "loader_reported"
+	ProvenanceEstimated Provenance = "model_estimated"
+	ProvenanceAssumed   Provenance = "assumed"
+	ProvenanceUser      Provenance = "user_supplied"
+)
+
+// MemoryKind distinguishes a dedicated accelerator pool from Apple unified
+// memory and a manual planning budget.
+type MemoryKind string
+
+const (
+	MemoryDedicated MemoryKind = "dedicated_vram"
+	MemoryUnified   MemoryKind = "unified_memory"
+	MemoryManual    MemoryKind = "manual"
+)
 
 // Proc is a process holding VRAM on a device, as reported by the driver.
 type Proc struct {
@@ -56,17 +80,22 @@ type Proc struct {
 	UsedBytes uint64 `json:"used_bytes"`
 }
 
-// GPU is device-level memory ground truth from the driver.
+// GPU is device-level memory from a provider. CapacitySource and UsageSource
+// state whether those values were measured or had to be assumed.
 type GPU struct {
-	Index      int    `json:"index"`
-	Name       string `json:"name"`
-	Vendor     Vendor `json:"vendor"`
-	Driver     string `json:"driver,omitempty"`
-	PCIBus     string `json:"pci_bus,omitempty"` // e.g. "0000:03:00.0"; used to map /proc fdinfo to a device
-	TotalBytes uint64 `json:"total_bytes"`
-	UsedBytes  uint64 `json:"used_bytes"`
-	FreeBytes  uint64 `json:"free_bytes"`
-	Procs      []Proc `json:"processes,omitempty"`
+	Index          int        `json:"index"`
+	Name           string     `json:"name"`
+	Vendor         Vendor     `json:"vendor"`
+	Driver         string     `json:"driver,omitempty"`
+	PCIBus         string     `json:"pci_bus,omitempty"` // e.g. "0000:03:00.0"; used to map /proc fdinfo to a device
+	TotalBytes     uint64     `json:"total_bytes"`
+	UsedBytes      uint64     `json:"used_bytes"`
+	FreeBytes      uint64     `json:"free_bytes"`
+	Procs          []Proc     `json:"processes,omitempty"`
+	MemoryKind     MemoryKind `json:"memory_kind,omitempty"`
+	BudgetBytes    uint64     `json:"accelerator_budget_bytes,omitempty"`
+	CapacitySource Provenance `json:"capacity_provenance,omitempty"`
+	UsageSource    Provenance `json:"usage_provenance,omitempty"`
 }
 
 // Arch holds the architecture parameters needed to compute a model's KV
@@ -76,7 +105,8 @@ type Arch struct {
 	Layers     int    `json:"layers,omitempty"`       // transformer blocks
 	KVHeads    int    `json:"kv_heads,omitempty"`     // key/value heads (GQA/MQA aware)
 	HeadDim    int    `json:"head_dim,omitempty"`     // per-head dimension
-	KVTypeBits int    `json:"kv_type_bits,omitempty"` // bits per KV element (16=f16, 8=q8_0, ...)
+	ValueDim   int    `json:"value_dim,omitempty"`    // value-head dimension; zero => HeadDim
+	KVTypeBits int    `json:"kv_type_bits,omitempty"` // effective integer bits per KV element (16=f16, 9≈q8_0, ...)
 }
 
 // KnownForKV reports whether Arch has everything needed to compute KV size.
@@ -86,17 +116,21 @@ func (a Arch) KnownForKV() bool {
 
 // LoaderModel is a model an inference loader reports as resident in VRAM.
 type LoaderModel struct {
-	Loader        string `json:"loader"` // ollama | llama.cpp | ...
-	Name          string `json:"name"`
-	PID           int    `json:"pid,omitempty"`
-	GPUIndex      int    `json:"gpu_index"`  // best-effort device mapping; -1 if unknown
-	VRAMBytes     uint64 `json:"vram_bytes"` // total resident in VRAM (loader ground truth)
-	WeightsBytes  uint64 `json:"weights_bytes,omitempty"`
-	KVCacheBytes  uint64 `json:"kv_cache_bytes,omitempty"`
-	ContextTokens int    `json:"context_tokens,omitempty"` // configured n_ctx
-	ContextMax    int    `json:"context_max,omitempty"`    // trained context length
-	Arch          Arch   `json:"arch"`
-	Estimated     bool   `json:"estimated,omitempty"` // weights/kv were derived, not reported
+	Loader        string     `json:"loader"` // ollama | llama.cpp | ...
+	Name          string     `json:"name"`
+	PID           int        `json:"pid,omitempty"`
+	GPUIndex      int        `json:"gpu_index"`  // best-effort device mapping; -1 if unknown
+	VRAMBytes     uint64     `json:"vram_bytes"` // total resident footprint; see VRAMSource
+	WeightsBytes  uint64     `json:"weights_bytes,omitempty"`
+	KVCacheBytes  uint64     `json:"kv_cache_bytes,omitempty"`
+	ContextTokens int        `json:"context_tokens,omitempty"` // configured n_ctx
+	ContextMax    int        `json:"context_max,omitempty"`    // trained context length
+	Arch          Arch       `json:"arch"`
+	Estimated     bool       `json:"estimated,omitempty"` // weights/kv were derived, not reported
+	Quantization  string     `json:"quantization,omitempty"`
+	Digest        string     `json:"digest,omitempty"`
+	ArtifactPath  string     `json:"artifact_path,omitempty"`
+	VRAMSource    Provenance `json:"vram_provenance,omitempty"`
 }
 
 // Prediction estimates how much context a model can hold before it runs out

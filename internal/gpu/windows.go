@@ -54,7 +54,7 @@ func (Windows) Sample(ctx context.Context) ([]model.GPU, error) {
 		}
 		// FreeBytes defaults to the whole card; usage is filled in below only
 		// when it can be attributed to a device unambiguously.
-		gpus = append(gpus, model.GPU{Index: len(gpus), Name: name, Vendor: vendor, TotalBytes: total, FreeBytes: total})
+		gpus = append(gpus, model.GPU{Index: len(gpus), Name: name, Vendor: vendor, TotalBytes: total, FreeBytes: total, MemoryKind: model.MemoryDedicated, BudgetBytes: total, CapacitySource: model.ProvenanceMeasured, UsageSource: model.ProvenanceAssumed})
 	}
 	if len(gpus) == 0 {
 		return nil, nil
@@ -67,8 +67,9 @@ func (Windows) Sample(ctx context.Context) ([]model.GPU, error) {
 	// card reports full free) rather than guessed onto the wrong device.
 	if len(gpus) == 1 {
 		if out, err := run(ctx, "typeperf", `\GPU Adapter Memory(*)\Dedicated Usage`, "-sc", "1"); err == nil {
+			values := parseTypeperfAdapter(out)
 			var used uint64
-			for _, u := range parseTypeperfAdapter(out) {
+			for _, u := range values {
 				if u > used {
 					used = u // the real GPU dominates; software adapters report ~0
 				}
@@ -78,6 +79,9 @@ func (Windows) Sample(ctx context.Context) ([]model.GPU, error) {
 			}
 			gpus[0].UsedBytes = used
 			gpus[0].FreeBytes = gpus[0].TotalBytes - used
+			if len(values) > 0 {
+				gpus[0].UsageSource = model.ProvenanceMeasured
+			}
 		}
 	}
 	return gpus, nil
