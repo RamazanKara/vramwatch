@@ -35,6 +35,14 @@ jobs:
           go run ./tools/reportfixture > /tmp/card.svg
           diff -q /tmp/card.svg docs/sample/vramwatch-card.svg
 
+      - name: committed README demo is up to date
+        working-directory: docs/gifgen
+        run: |
+          go run . /tmp/vramwatch-demo.gif
+          cmp /tmp/vramwatch-demo.gif ../demo.gif
+          expected=$(sed -n 's/  "sha256": "\([^"]*\)",/\1/p' ../demo.manifest.json)
+          test "$(sha256sum ../demo.gif | cut -d' ' -f1)" = "$expected"
+
   crosscompile:
     runs-on: ubuntu-latest
     strategy:

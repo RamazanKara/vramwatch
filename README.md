@@ -13,6 +13,12 @@
 next questions: *why* is it full, and will this model, quantization, and context
 fit before you spend time downloading or launching it?
 
+<p align="center">
+  <img src="docs/demo.gif" alt="Animated vramwatch walkthrough showing pre-download fit prediction, provenance-aware VRAM monitoring, doctor diagnostics, and an SVG accuracy report" width="900">
+</p>
+
+<p align="center"><sub>Deterministic illustrative walkthrough. Provenance badges match the real CLI: measured <code>[M]</code>, loader-reported <code>[R]</code>, estimated <code>[E]</code>, and assumed <code>[A]</code>.</sub></p>
+
 ```sh
 vramwatch fit ollama:llama3.2:3b-instruct --quant q4_k_m --context 32768
 vramwatch watch
@@ -244,6 +250,7 @@ make build
 make test
 make vet
 make card   # regenerate the deterministic SVG above
+make gif    # regenerate the animated README walkthrough
 ```
 
 The project has no third-party Go dependencies. Provider parsing, prediction,
