@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "asset": "docs/demo.gif",
+  "sha256": "df813a6f23ed4471ce900bfc56c5aa4af2b97cdf5b994adadf21e2a56f0fd82d",
+  "width": 1040,
+  "height": 600,
+  "frames": 19,
+  "duration_centiseconds": 816,
+  "generator": "docs/gifgen/main.go",
+  "regenerate": "make gif",
+  "content": [
+    "fit",
+    "watch",
+    "doctor",
+    "report"
+  ],
+  "provenance": "Deterministic illustrative scenario; not a hardware benchmark. Labels and provenance semantics match the CLI."
+}

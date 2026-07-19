@@ -46,6 +46,8 @@ of accelerator memory and determine what will fit before loading it.
 
 ### Changed
 
+- The README now leads with a deterministic animated walkthrough of preflight
+  fit, provenance-aware watch output, doctor diagnostics, and the SVG report.
 - GGUF KV metadata now preserves different key and value head dimensions.
 - GGUF `general.file_type` mapping follows the upstream `llama_ftype` enum,
   including current K/IQ/TQ/BF16 formats. Optional file type is no longer confused
