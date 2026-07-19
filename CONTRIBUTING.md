@@ -12,12 +12,15 @@ cd vramwatch
 go test ./...          # run the suite
 make build             # build ./vramwatch
 make demo              # live TUI against the synthetic demo source
+make gif               # regenerate the animated README walkthrough
 ```
 
-There are **no third-party Go dependencies** and there should stay none: the value
-proposition is one binary with no language runtime or package environment. Please
-keep `go.mod` free of `require` lines beyond the standard library. Native macOS
-builds link only Apple's system Foundation/Metal frameworks.
+The shipped module has **no third-party Go dependencies** and should stay that
+way: the value proposition is one binary with no language runtime or package
+environment. Keep the root `go.mod` free of `require` lines beyond the standard
+library. The standalone `docs/gifgen` module may use `x/image` to produce the
+README asset; it is not linked into vramwatch. Native macOS builds link only
+Apple's system Foundation/Metal frameworks.
 
 ## Ground rules
 
