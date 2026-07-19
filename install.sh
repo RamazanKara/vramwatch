@@ -1,7 +1,7 @@
 #!/bin/sh
 # vramwatch installer.
 #
-#   curl -fsSL https://raw.githubusercontent.com/RamazanKara/vramwatch/master/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/RamazanKara/vramwatch/main/install.sh | sh
 #
 # Downloads the latest release binary for your OS/arch and installs it into
 # INSTALL_DIR (default: /usr/local/bin, or ~/.local/bin without write access).

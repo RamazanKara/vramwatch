@@ -144,7 +144,7 @@ reproducible output. Existing files are protected unless `--force` is supplied.
 
 ```sh
 # Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/RamazanKara/vramwatch/master/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/RamazanKara/vramwatch/main/install.sh | sh
 
 # Or with Go
 go install github.com/RamazanKara/vramwatch/cmd/vramwatch@latest

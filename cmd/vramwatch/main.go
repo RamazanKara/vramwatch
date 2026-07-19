@@ -38,7 +38,7 @@ EXAMPLES
   vramwatch report --svg
 
 Docs:        https://github.com/RamazanKara/vramwatch
-Methodology: https://github.com/RamazanKara/vramwatch/blob/master/docs/METHODOLOGY.md
+Methodology: https://github.com/RamazanKara/vramwatch/blob/main/docs/METHODOLOGY.md
 `
 
 func main() {
