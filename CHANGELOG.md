@@ -6,6 +6,12 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep unavailable NVIDIA and AMD memory usage distinct from measured zero in
+  `fit`, `doctor`, and reports. AMD capacity-only metrics no longer imply an idle
+  GPU; zero-free-memory readings correctly identify a full device.
+
 ## [0.7.0] - 2026-07-19
 
 This is the launch-shape rewrite around one promise: see why a local LLM ran out
