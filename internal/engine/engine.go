@@ -19,10 +19,9 @@ const DefaultOOMThreshold = 512 * model.MiB
 
 // Options tunes the attribution and prediction behaviour.
 type Options struct {
-	Version      string
-	Host         string
-	Now          time.Time // injectable for deterministic output; zero => time.Now()
-	OOMThreshold uint64    // 0 => DefaultOOMThreshold
+	Version string
+	Host    string
+	Now     time.Time // injectable for deterministic output; zero => time.Now()
 	// KVBits overrides the KV-cache element size (in bits) for every model, so a
 	// quantized cache (q8_0 conservatively 9, q4_0 conservatively 5) is
 	// estimated correctly instead of the f16 default. 0 leaves each model's own
@@ -39,13 +38,6 @@ func (o Options) now() time.Time {
 		return time.Now()
 	}
 	return o.Now
-}
-
-func (o Options) oomThreshold() uint64 {
-	if o.OOMThreshold == 0 {
-		return DefaultOOMThreshold
-	}
-	return o.OOMThreshold
 }
 
 // KVBytesPerToken returns the number of VRAM bytes one additional context
@@ -119,18 +111,13 @@ func modelKV(m model.LoaderModel) (kv uint64, reported bool) {
 	return KVCacheBytes(m.Arch, m.ContextTokens), false
 }
 
-// AttributeGPU produces the fully-tiled segment list for one device given the
+// attributeGPU produces the fully-tiled segment list for one device given the
 // models resident on it. The segments always sum exactly to gpu.TotalBytes.
 //
 // Reported figures (loader-provided weights/KV) are treated as ground truth and
 // win any conflict; estimated figures are shrunk to fit the real footprint. An
 // estimated KV never claims the whole footprint, since weights are always
 // resident too.
-func AttributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, []string) {
-	segs, warnings, _ := attributeGPU(gpu, models)
-	return segs, warnings
-}
-
 func attributeGPU(gpu model.GPU, models []model.LoaderModel) ([]model.Segment, []string, model.GPU) {
 	var warnings []string
 
@@ -386,68 +373,10 @@ func Predict(gpu model.GPU, models []model.LoaderModel, oomThreshold uint64) *mo
 	}
 }
 
-// ContextFit describes whether a target context length fits on a device for
-// the currently-loaded primary model.
-type ContextFit struct {
-	Model           string
-	TargetContext   int
-	NeededBytes     uint64 // weights + KV(target) + current compute overhead
-	TotalBytes      uint64
-	Fits            bool // fits in VRAM
-	KVAtTarget      uint64
-	ModelContextMax int  // model's trained context length (0 if unknown)
-	ExceedsTrained  bool // target exceeds the trained context (fits in VRAM but risky)
-}
-
-// WillContextFit computes whether targetCtx fits for the primary model on the
-// device, holding weights and compute overhead constant and scaling only the
-// KV cache. Leaves a 2% device slack. Returns false, ok=false if no
-// KV-known model is loaded.
-func WillContextFit(gpu model.GPU, models []model.LoaderModel, targetCtx int) (ContextFit, bool) {
-	if targetCtx < 0 {
-		return ContextFit{}, false
-	}
-	m, ok := primaryModel(models)
-	if !ok {
-		return ContextFit{}, false
-	}
-	kvPerTok := KVBytesPerToken(m.Arch)
-	if kvPerTok == 0 {
-		return ContextFit{}, false
-	}
-	// Everything in the footprint that isn't the current KV cache (weights +
-	// compute overhead) is held constant; only the KV cache scales with context.
-	curKV, _ := modelKV(m)
-	footprint := m.VRAMBytes
-	if pu := procUsedFor(gpu, models); pu > 0 {
-		footprint = pu
-	}
-	if footprint == 0 {
-		footprint = saturatingAdd(m.WeightsBytes, curKV) // e.g. llama.cpp: weights from GGUF + KV
-	}
-	var base uint64
-	if footprint > curKV {
-		base = footprint - curKV
-	}
-	kvTarget := saturatingMul(kvPerTok, uint64(targetCtx))
-	needed := saturatingAdd(base, kvTarget)
-	budget := gpu.TotalBytes - gpu.TotalBytes/50 // 98% of total
-	return ContextFit{
-		Model:           m.Name,
-		TargetContext:   targetCtx,
-		NeededBytes:     needed,
-		TotalBytes:      gpu.TotalBytes,
-		Fits:            needed <= budget,
-		KVAtTarget:      kvTarget,
-		ModelContextMax: m.ContextMax,
-		ExceedsTrained:  m.ContextMax > 0 && targetCtx > m.ContextMax,
-	}, true
-}
-
 // primaryModel returns the largest-VRAM resident model whose architecture is
-// known well enough to compute a KV cache. That is the model predictions and
-// fit checks are about. A bigger model with an unknown architecture is skipped
-// in favour of a smaller, fully-known one rather than giving up entirely.
+// known well enough to compute a KV cache. A bigger model with an unknown
+// architecture is skipped in favour of a smaller, fully-known one rather than
+// giving up entirely.
 func primaryModel(models []model.LoaderModel) (model.LoaderModel, bool) {
 	var best model.LoaderModel
 	found := false
@@ -498,7 +427,7 @@ func Build(gpus []model.GPU, models []model.LoaderModel, opts Options) model.Sna
 			GPU:        g,
 			Segments:   segs,
 			Models:     devModels,
-			Prediction: Predict(g, devModels, opts.oomThreshold()),
+			Prediction: Predict(g, devModels, DefaultOOMThreshold),
 			Warnings:   warns,
 			Timestamp:  now,
 		}

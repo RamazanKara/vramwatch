@@ -49,7 +49,7 @@ func scenario70B() (model.GPU, []model.LoaderModel) {
 
 func TestAttributeGPUTilesExactly(t *testing.T) {
 	gpu, models := scenario70B()
-	segs, _ := AttributeGPU(gpu, models)
+	segs, _, _ := attributeGPU(gpu, models)
 
 	var sum uint64
 	kinds := map[model.SegmentKind]uint64{}
@@ -80,7 +80,7 @@ func TestAttributeGPUTilesExactly(t *testing.T) {
 
 func TestAttributeGPUNoLoader(t *testing.T) {
 	gpu := model.GPU{Index: 0, Vendor: model.VendorNVIDIA, TotalBytes: 8 * model.GiB, UsedBytes: 3 * model.GiB, FreeBytes: 5 * model.GiB}
-	segs, _ := AttributeGPU(gpu, nil)
+	segs, _, _ := attributeGPU(gpu, nil)
 	var sum, other, free uint64
 	for _, s := range segs {
 		sum += s.Bytes
@@ -115,25 +115,6 @@ func TestPredict(t *testing.T) {
 	}
 }
 
-func TestWillContextFit(t *testing.T) {
-	gpu, models := scenario70B()
-	// Currently at 8k and nearly full: 32k must not fit.
-	fit, ok := WillContextFit(gpu, models, 32768)
-	if !ok {
-		t.Fatal("expected fit computation")
-	}
-	if fit.Fits {
-		t.Errorf("32k context should not fit on a nearly-full 24 GiB card")
-	}
-	if fit.KVAtTarget != KVCacheBytes(models[0].Arch, 32768) {
-		t.Errorf("KVAtTarget wrong: %d", fit.KVAtTarget)
-	}
-	// The scenario model is trained to 8192, so 32768 exceeds it.
-	if !fit.ExceedsTrained || fit.ModelContextMax != 8192 {
-		t.Errorf("expected ExceedsTrained with trained max 8192, got %+v", fit)
-	}
-}
-
 // Reported weights must survive a conflict with an over-estimated KV cache.
 func TestAttributeReportedWeightsWin(t *testing.T) {
 	gpu := model.GPU{Index: 0, Vendor: model.VendorAMD, TotalBytes: 24 * model.GiB, UsedBytes: 20 * model.GiB, FreeBytes: 4 * model.GiB}
@@ -144,7 +125,7 @@ func TestAttributeReportedWeightsWin(t *testing.T) {
 		ContextTokens: 26000,          // KV estimate ~8 GiB, over the footprint
 		Arch:          model.Arch{Name: "llama", Layers: 80, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
 	}
-	segs, _ := AttributeGPU(gpu, []model.LoaderModel{m})
+	segs, _, _ := attributeGPU(gpu, []model.LoaderModel{m})
 	var sum uint64
 	kinds := map[model.SegmentKind]uint64{}
 	for _, s := range segs {
@@ -171,7 +152,7 @@ func TestAttributeKVOvershootLeavesWeights(t *testing.T) {
 		ContextTokens: 16384, // KV estimate ~5 GiB > footprint
 		Arch:          model.Arch{Name: "llama", Layers: 80, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
 	}
-	segs, warns := AttributeGPU(gpu, []model.LoaderModel{m})
+	segs, warns, _ := attributeGPU(gpu, []model.LoaderModel{m})
 	kinds := map[model.SegmentKind]uint64{}
 	var sum uint64
 	for _, s := range segs {
@@ -216,9 +197,6 @@ func TestPredictPrefersKnownArch(t *testing.T) {
 	}
 	if p.Model != "llama3:8b" {
 		t.Errorf("prediction should be for the known model, got %q", p.Model)
-	}
-	if _, ok := WillContextFit(gpu, models, 4096); !ok {
-		t.Error("WillContextFit should succeed using the known-arch model")
 	}
 }
 
@@ -265,7 +243,7 @@ func TestLlamaCppFootprintFallback(t *testing.T) {
 		ContextTokens: 8192,
 		Arch:          model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
 	}
-	segs, _ := AttributeGPU(gpu, []model.LoaderModel{m})
+	segs, _, _ := attributeGPU(gpu, []model.LoaderModel{m})
 	var sum uint64
 	kinds := map[model.SegmentKind]uint64{}
 	for _, s := range segs {
@@ -304,7 +282,7 @@ func TestFootprintFromNamedProcess(t *testing.T) {
 		ContextTokens: 8192,
 		Arch:          model.Arch{Name: "llama", Layers: 32, KVHeads: 8, HeadDim: 128, KVTypeBits: 16},
 	}
-	segs, _ := AttributeGPU(gpu, []model.LoaderModel{m})
+	segs, _, _ := attributeGPU(gpu, []model.LoaderModel{m})
 	kinds := map[model.SegmentKind]uint64{}
 	var sum uint64
 	for _, s := range segs {

@@ -1,6 +1,4 @@
-// Package render turns a model.Snapshot into the three output forms vramwatch
-// produces: a coloured console/TUI table, machine-readable JSON, and a branded
-// SVG scorecard (the shareable artifact).
+// Package render formats console/TUI tables and shareable SVG report cards.
 package render
 
 import (
@@ -20,23 +18,22 @@ var kindOrder = []model.SegmentKind{
 
 type style struct {
 	ansi  string // ANSI SGR parameters, e.g. "38;5;39"
-	hex   string // SVG fill colour
 	glyph rune   // ASCII glyph for no-colour bars
 }
 
 var styles = map[model.SegmentKind]style{
-	model.KindWeights:      {ansi: "38;5;39", hex: "#4C9BE8", glyph: '#'},
-	model.KindKVCache:      {ansi: "38;5;214", hex: "#E8B84C", glyph: '+'},
-	model.KindCompute:      {ansi: "38;5;43", hex: "#4CE0C0", glyph: '='},
-	model.KindOtherProcess: {ansi: "38;5;244", hex: "#6E7681", glyph: ':'},
-	model.KindFree:         {ansi: "38;5;35", hex: "#3FB950", glyph: '.'},
+	model.KindWeights:      {ansi: "38;5;39", glyph: '#'},
+	model.KindKVCache:      {ansi: "38;5;214", glyph: '+'},
+	model.KindCompute:      {ansi: "38;5;43", glyph: '='},
+	model.KindOtherProcess: {ansi: "38;5;244", glyph: ':'},
+	model.KindFree:         {ansi: "38;5;35", glyph: '.'},
 }
 
 func styleFor(k model.SegmentKind) style {
 	if s, ok := styles[k]; ok {
 		return s
 	}
-	return style{ansi: "0", hex: "#8B949E", glyph: ' '}
+	return style{ansi: "0", glyph: ' '}
 }
 
 // orderedSegments returns a breakdown's segments in canonical draw order,

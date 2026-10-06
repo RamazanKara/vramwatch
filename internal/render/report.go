@@ -8,6 +8,15 @@ import (
 	"github.com/RamazanKara/vramwatch/internal/model"
 )
 
+const (
+	svgWidth = 760
+	svgFont  = "ui-monospace, 'JetBrains Mono', 'SF Mono', Menlo, Consolas, monospace"
+	svgBG    = "#0d1117"
+	svgFG    = "#e6edf3"
+	svgMuted = "#8b949e"
+	svgTrack = "#161b22"
+)
+
 // ReportCard is deliberately privacy-safe: it contains no host, path, PID,
 // bus address, token, or serial-number field.
 type ReportCard struct {
@@ -96,4 +105,9 @@ func provenanceShort(p model.Provenance) string {
 	default:
 		return "E"
 	}
+}
+
+func escapeXML(s string) string {
+	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&quot;", "'", "&apos;")
+	return r.Replace(s)
 }

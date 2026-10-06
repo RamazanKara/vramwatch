@@ -102,7 +102,7 @@ func parseNvidiaApps(csv string, gpus []model.GPU, uuidToIdx map[string]int) {
 func splitCSV(line string) []string {
 	parts := strings.Split(line, ",")
 	for i := range parts {
-		parts[i] = trimField(parts[i])
+		parts[i] = strings.TrimSpace(parts[i])
 	}
 	return parts
 }
