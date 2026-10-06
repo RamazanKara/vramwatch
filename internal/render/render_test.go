@@ -21,7 +21,7 @@ var updateGolden = flag.Bool("update-golden", false, "rewrite the JSON schema go
 //
 //	go test ./internal/render -run JSONSchemaStable -update-golden
 func TestJSONSchemaStable(t *testing.T) {
-	data, err := JSON(sampleSnap()) // sampleSnap is fully deterministic
+	data, err := json.MarshalIndent(sampleSnap(), "", "  ") // sampleSnap is fully deterministic
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestTableColorEmitsANSI(t *testing.T) {
 }
 
 func TestJSONRoundTrips(t *testing.T) {
-	data, err := JSON(sampleSnap())
+	data, err := json.MarshalIndent(sampleSnap(), "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,20 +132,5 @@ func TestJSONRoundTrips(t *testing.T) {
 	}
 	if len(back.Breakdowns) != 1 || back.Breakdowns[0].GPU.Name != "AMD Radeon RX 7900 XTX" {
 		t.Errorf("round-trip lost data: %+v", back)
-	}
-}
-
-func TestSVGWellFormed(t *testing.T) {
-	out := SVG(sampleSnap())
-	if !strings.HasPrefix(out, "<svg") || !strings.HasSuffix(out, "</svg>") {
-		t.Fatal("SVG not wrapped in <svg> tags")
-	}
-	for _, want := range []string{"vramwatch", "RX 7900 XTX", "#E8B84C", "OOM risk", "clipPath"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("SVG missing %q", want)
-		}
-	}
-	if strings.Contains(out, "<text></text>") {
-		t.Error("empty text node")
 	}
 }

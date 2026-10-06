@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -116,29 +117,7 @@ type httpError struct {
 	code int
 }
 
-func (e *httpError) Error() string { return e.url + ": HTTP " + itoa(e.code) }
-
-func itoa(n int) string {
-	if n == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	neg := n < 0
-	if neg {
-		n = -n
-	}
-	for n > 0 {
-		i--
-		b[i] = byte('0' + n%10)
-		n /= 10
-	}
-	if neg {
-		i--
-		b[i] = '-'
-	}
-	return string(b[i:])
-}
+func (e *httpError) Error() string { return e.url + ": HTTP " + strconv.Itoa(e.code) }
 
 // normalizeBase trims a trailing slash and applies a default when empty,
 // honouring the given environment variable if set.

@@ -134,5 +134,3 @@ func lookPath(name string) bool {
 	_, err := exec.LookPath(name)
 	return err == nil
 }
-
-func trimField(s string) string { return strings.TrimSpace(s) }

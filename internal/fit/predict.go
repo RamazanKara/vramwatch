@@ -87,8 +87,8 @@ func Predict(a Artifact, targets []Target, opts PredictOptions) (Result, error) 
 	if err != nil {
 		return Result{}, err
 	}
-	expectedRuntime := max64(64*model.MiB, roundUp(percentCeil(a.WeightBytes, 10), 16*model.MiB))
-	ceilingRuntime := max64(256*model.MiB, roundUp(percentCeil(a.WeightBytes, 15), 16*model.MiB))
+	expectedRuntime := max(64*model.MiB, roundUp(percentCeil(a.WeightBytes, 10), 16*model.MiB))
+	ceilingRuntime := max(256*model.MiB, roundUp(percentCeil(a.WeightBytes, 15), 16*model.MiB))
 	expected := saturatingAdd(saturatingAdd(a.WeightBytes, kv), expectedRuntime)
 	conservative := saturatingAdd(saturatingAdd(a.WeightBytes, kv), ceilingRuntime)
 	r := Result{
@@ -113,7 +113,7 @@ func Predict(a Artifact, targets []Target, opts PredictOptions) (Result, error) 
 	}
 	for _, t := range targets {
 		capacity := t.CapacityBytes
-		margin := max64(512*model.MiB, roundUp(percentCeil(capacity, 5), 16*model.MiB))
+		margin := max(512*model.MiB, roundUp(percentCeil(capacity, 5), 16*model.MiB))
 		required := saturatingAdd(conservative, margin)
 		tr := TargetResult{
 			Target: t, FitsOnDevice: verdict(required, capacity, contextOK), DeviceSpareBytes: delta(capacity, required), RequiredBytes: required,
@@ -229,12 +229,6 @@ func percentCeil(v, p uint64) uint64 {
 	whole := saturatingMul(v/100, p)
 	fraction := ((v%100)*p + 99) / 100
 	return saturatingAdd(whole, fraction)
-}
-func max64(a, b uint64) uint64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 func saturatingAdd(a, b uint64) uint64 {
 	c := a + b
