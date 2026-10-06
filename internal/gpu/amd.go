@@ -47,7 +47,8 @@ func (AMD) Sample(ctx context.Context) ([]model.GPU, error) {
 
 // amdUsage is the live VRAM usage for one GPU, from `amd-smi metric`.
 type amdUsage struct {
-	total, used, free uint64
+	total, used, free    uint64
+	usedKnown, freeKnown bool
 }
 
 // parseAMDSMI merges `amd-smi static --json` (identity + capacity) with
@@ -66,7 +67,7 @@ func parseAMDSMI(staticJSON, metricJSON string) ([]model.GPU, error) {
 		if !ok {
 			continue // not a per-GPU element
 		}
-		u, usageKnown := usage[idx] // zero value if this GPU had no metric entry
+		u := usage[idx] // zero value if this GPU had no metric entry
 
 		total := u.total
 		if total == 0 {
@@ -77,10 +78,10 @@ func parseAMDSMI(staticJSON, metricJSON string) ([]model.GPU, error) {
 		// Fill a missing side of the used/free/total triangle when we know total
 		// and one of the other two (amd-smi can report "N/A" for either).
 		if total > 0 {
-			if used == 0 && free > 0 && free <= total {
+			if !u.usedKnown && u.freeKnown && free <= total {
 				used = total - free
 			}
-			if free == 0 && total >= used {
+			if !u.freeKnown && total >= used {
 				free = total - used
 			}
 		}
@@ -99,7 +100,7 @@ func parseAMDSMI(staticJSON, metricJSON string) ([]model.GPU, error) {
 			name = "AMD GPU " + strconv.Itoa(idx)
 		}
 		usageSource := model.ProvenanceAssumed
-		if usageKnown {
+		if u.usedKnown || u.freeKnown {
 			usageSource = model.ProvenanceMeasured
 		}
 		gpus = append(gpus, model.GPU{
@@ -143,10 +144,10 @@ func parseAMDMetric(metricJSON string) map[int]amdUsage {
 		}
 		u := amdUsage{
 			total: amdBytes(mem["total_vram"]),
-			used:  amdBytes(mem["used_vram"]),
-			free:  amdBytes(mem["free_vram"]),
 		}
-		if u.total == 0 && u.used == 0 && u.free == 0 {
+		u.used, u.usedKnown = parseAMDBytes(mem["used_vram"])
+		u.free, u.freeKnown = parseAMDBytes(mem["free_vram"])
+		if u.total == 0 && !u.usedKnown && !u.freeKnown {
 			continue
 		}
 		out[idx] = u
@@ -217,8 +218,15 @@ func amdVRAMSize(vramBlock json.RawMessage) uint64 {
 // string "N/A" (missing). amd-smi labels VRAM "MB" but the value is actually
 // MiB-magnitude (bytes/1048576), so MB and MiB both scale by 1<<20.
 func amdBytes(raw json.RawMessage) uint64 {
+	value, _ := parseAMDBytes(raw)
+	return value
+}
+
+// parseAMDBytes distinguishes a measured zero from an unavailable or invalid
+// reading, so a capacity-only response cannot imply an idle GPU.
+func parseAMDBytes(raw json.RawMessage) (uint64, bool) {
 	if len(raw) == 0 {
-		return 0
+		return 0, false
 	}
 	// Bare number (old builds emit an int with no unit wrapper).
 	var num json.Number
@@ -233,7 +241,7 @@ func amdBytes(raw json.RawMessage) uint64 {
 	if json.Unmarshal(raw, &vu) == nil && vu.Value != "" {
 		return amdScale(vu.Value, vu.Unit)
 	}
-	return 0 // "N/A" or an unexpected shape
+	return 0, false // "N/A" or an unexpected shape
 }
 
 // maxPlausibleVRAM caps a single GPU's VRAM at 1 PiB; a larger figure is a
@@ -242,11 +250,11 @@ const maxPlausibleVRAM = float64(uint64(1) << 50)
 
 // amdScale converts a value + unit to bytes. amd-smi's VRAM "MB" is really MiB,
 // so MB and MiB are treated identically (1<<20). A non-finite or implausibly
-// large result is rejected (returns 0) rather than saturating uint64.
-func amdScale(n json.Number, unit string) uint64 {
+// large result is rejected rather than saturating uint64.
+func amdScale(n json.Number, unit string) (uint64, bool) {
 	f, err := n.Float64()
 	if err != nil || f < 0 || math.IsNaN(f) {
-		return 0
+		return 0, false
 	}
 	var mult float64
 	switch strings.ToUpper(strings.TrimSpace(unit)) {
@@ -263,7 +271,7 @@ func amdScale(n json.Number, unit string) uint64 {
 	}
 	bytes := f * mult
 	if math.IsInf(bytes, 0) || math.IsNaN(bytes) || bytes >= maxPlausibleVRAM {
-		return 0
+		return 0, false
 	}
-	return uint64(bytes)
+	return uint64(bytes), true
 }
