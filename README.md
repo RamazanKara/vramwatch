@@ -3,10 +3,9 @@
 <p align="center"><strong>vramwatch — see why your local LLM ran out of GPU memory and determine what will fit before loading it.</strong></p>
 
 <p align="center">
-  <a href="https://github.com/RamazanKara/vramwatch/actions/workflows/ci.yml"><img src="https://github.com/RamazanKara/vramwatch/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License"></a>
   <a href="https://github.com/RamazanKara/vramwatch/releases"><img src="https://img.shields.io/github/v/release/RamazanKara/vramwatch?sort=semver" alt="Release"></a>
-  <img src="https://img.shields.io/badge/Go_dependencies-0-brightgreen" alt="Zero Go dependencies">
+  <img src="https://img.shields.io/badge/CLI_Go_dependencies-0-brightgreen" alt="Zero third-party Go dependencies in the CLI">
 </p>
 
 `nvidia-smi` and `amd-smi` can show that a card is full. vramwatch answers the
@@ -46,11 +45,11 @@ larger un-ranged response are refused.
 | Local GGUF | `/models/model-Q4_K_M.gguf` |
 | HTTPS GGUF | `https://example/model-Q4_K_M.gguf` |
 
-Useful flags:
+Useful flags (replace `./model.gguf` with an existing local GGUF):
 
 ```sh
-vramwatch fit hf:owner/repo --quant q4_k_m --context 32768
-vramwatch fit hf:owner/repo --file model-Q4_K_M.gguf --revision main --context 32768
+vramwatch fit hf:bartowski/Llama-3.2-1B-Instruct-GGUF --quant q4_k_m --context 32768
+vramwatch fit hf:bartowski/Llama-3.2-1B-Instruct-GGUF --file Llama-3.2-1B-Instruct-Q4_K_M.gguf --revision main --context 32768
 vramwatch fit ./model.gguf --context 32768 --kv-cache-type q8_0
 vramwatch fit ./model.gguf --context 32768 --vram 24GiB   # plan without detected hardware
 vramwatch fit ./model.gguf --context 32768 --json
@@ -92,7 +91,7 @@ vramwatch watch --once --no-color
 ```
 
 When a resident model matches a saved fit prediction, watch displays predicted
-versus observed memory. After three stable samples (within 2%), it records the
+versus observed memory. After three consecutive stable samples (2% tolerance), it records the
 observation locally for the accuracy report.
 
 For demos and provider development, `watch --source demo` and
@@ -123,13 +122,13 @@ into a failure.
 
 Every `fit` invocation saves a small local prediction record unless `--no-record`
 is used. `watch` or a later `report` pairs it with a matching resident model and
-records the measured or loader-reported footprint. The report shows hardware,
+records the driver-measured, loader-reported, or estimated footprint. The report shows hardware,
 model, quant, context, prediction, observation provenance, and signed/absolute
 error.
 
 ```sh
 vramwatch report                         # latest prediction, console
-vramwatch report --prediction ID --json
+vramwatch report --prediction ID --json   # replace ID with a fit record_id
 vramwatch report --svg                   # timestamped SVG filename
 vramwatch report --svg --output card.svg
 ```
@@ -143,17 +142,18 @@ reproducible output. Existing files are protected unless `--force` is supplied.
 ## Install
 
 ```sh
-# Linux / macOS
-curl -fsSL https://raw.githubusercontent.com/RamazanKara/vramwatch/main/install.sh | sh
-
-# Or with Go
 go install github.com/RamazanKara/vramwatch/cmd/vramwatch@latest
 ```
 
-Windows users can download the `.zip` from
-[Releases](https://github.com/RamazanKara/vramwatch/releases) or use `go install`.
-Release binaries are produced for Linux amd64/arm64, Windows amd64, and macOS
-amd64/arm64. macOS artifacts are built natively with the system Metal framework.
+A [shell installer](install.sh) is also available for Linux and macOS.
+Windows users can use `go install` with Go 1.26.8 or newer. Existing archives
+are listed under [Releases](https://github.com/RamazanKara/vramwatch/releases).
+The v0.7.1 Windows binary was built with Go 1.26.3; its scan flags
+standard-library advisories, including [GO-2026-6218](https://pkg.go.dev/vuln/GO-2026-6218).
+Use a current source build until updated release archives are published.
+The v0.7.1 release includes Linux amd64/arm64, Windows amd64, and macOS
+amd64/arm64 archives. The release workflow uses native macOS runners to link Metal;
+native macOS execution is not part of the local Windows validation.
 
 ## What is supported
 
@@ -191,6 +191,7 @@ conservative  = GGUF bytes + KV bytes + max(256 MiB, 15% of weights)
 required      = conservative + max(512 MiB, 5% of accelerator capacity)
 ```
 
+The percentage runtime terms and safety reserve are rounded up to 16 MiB.
 GGUF bytes are treated as estimated GPU-resident weights because this assumes
 full offload. The runtime terms and safety reserve are assumptions, clearly marked
 `[A]`. See [the methodology](docs/METHODOLOGY.md) for exact arithmetic, cache
@@ -205,13 +206,16 @@ files under the platform state directory:
 - macOS: `~/Library/Application Support/vramwatch`
 - Windows: `%LOCALAPPDATA%\vramwatch`
 
-Set `VRAMWATCH_STATE_DIR` to override this location. Records can include the model
+Set `VRAMWATCH_STATE_DIR` to override this location. Unix prediction directories
+and files use modes 0700 and 0600. Windows inherits directory ACLs; use a private
+directory when overriding the default. Records can include the model
 reference you supplied, including a local path or URL; they stay local. SVG output
 is scrubbed as described above. Raw `report --json` is intended for local
 automation and is not privacy-scrubbed.
 
-Live watch/doctor talk only to local drivers and loader endpoints. Remote `fit`
-contacts the selected Hugging Face or Ollama registry for metadata;
+Live watch/doctor query local drivers and the configured loader endpoints
+(`OLLAMA_HOST` and `LLAMACPP_HOST`, defaulting to loopback). Remote `fit`
+contacts the selected Hugging Face or Ollama registry, or the supplied HTTPS URL, for metadata;
 `doctor --online` performs explicit registry probes.
 
 ## Limitations
@@ -226,8 +230,10 @@ contacts the selected Hugging Face or Ollama registry for metadata;
   allocating after the sample.
 - KV cache type defaults to f16. Pass `--kv-cache-type` when your loader uses a
   quantized cache.
-- Prediction accuracy is recorded only when model identity, quant, and context can
-  be matched unambiguously and exactly one model is resident on the device.
+- Prediction pairing checks the requested loader, model name or comparable digest,
+  context, and quantization when both sides provide it. Exactly one model must be
+  resident on the device. Missing quantization and the loader's actual KV cache
+  type cannot be independently verified by this pairing.
 - Apple unified memory is not dedicated VRAM. vramwatch reports the Metal working
   set budget and currently reclaimable memory, and labels the memory kind explicitly.
 
@@ -246,14 +252,22 @@ Invoking an old name returns a migration message and usage status `2`.
 ## Development
 
 ```sh
-make build
-make test
+make fmt
 make vet
+make build
+make test   # includes Go's race detector; requires a C compiler
 make card   # regenerate the deterministic SVG above
 make gif    # regenerate the animated README walkthrough
 ```
 
-The project has no third-party Go dependencies. Provider parsing, prediction,
+Use Go 1.26.8 or newer. The make targets need Git, GNU make, and a POSIX shell;
+on Windows, use a compatible toolchain or WSL. GitHub Actions is currently
+unavailable because of billing, so the local gate is `make fmt vet test build`.
+The single CI workflow runs the same gate on push or manual dispatch; tag releases
+remain separate.
+
+The CLI module has no third-party Go dependencies. The standalone `docs/gifgen`
+module uses `golang.org/x/image`. Provider parsing, prediction,
 ledger persistence, privacy behavior, report rendering, and the documented
 model-first fit invocation are covered by hardware-free tests. See
 [Contributing](CONTRIBUTING.md), [Validation](docs/VALIDATION.md), and the

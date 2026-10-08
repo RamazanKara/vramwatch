@@ -203,10 +203,15 @@ segments tile device capacity exactly.
 ## Prediction ledger and accuracy
 
 `fit` stores its result locally unless `--no-record` is set. A resident model is
-paired only when identity (name or a comparable digest), context, and available
-quantization agree, and only when exactly one model is resident on that device.
+paired only when the requested loader, identity (name or a comparable digest),
+context, and available quantization agree, and only when exactly one model is
+resident on that device. A missing quantization or the loader's actual cache
+type is not independently verified.
 
-Watch waits for three footprint samples within 2% before persisting an observation.
+Watch compares each footprint sample to the first in the current run, using
+abs(sample - first) / sample <= 0.02. It waits for three consecutive accepted
+samples before persisting an observation. A missing model or unstable footprint
+restarts that count.
 `report` may take a current matching observation immediately. Driver process memory
 is `[M]`; loader model VRAM is `[R]`; an attributed fallback is `[E]`.
 

@@ -13,6 +13,8 @@ unknown sizes fail closed, and parser counts/depths are bounded.
 `HF_TOKEN` is used as an authorization header for Hugging Face metadata and is not
 printed or placed in SVG output. Local ledger records and raw JSON can retain the
 original model reference, so treat the state directory as private diagnostic data.
+Unix ledger directories/files use modes 0700/0600. Windows inherits directory
+ACLs; an overridden state directory must have suitable access restrictions.
 The shareable SVG path is separately scrubbed of local paths, URL queries, host
 identity, PIDs, bus addresses, and serial-number fields.
 

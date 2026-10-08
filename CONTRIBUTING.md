@@ -9,11 +9,15 @@ attribution.
 ```sh
 git clone https://github.com/RamazanKara/vramwatch
 cd vramwatch
-go test ./...          # run the suite
+make fmt vet test      # format check, vet, and race-enabled tests
 make build             # build ./vramwatch
 make demo              # live TUI against the synthetic demo source
 make gif               # regenerate the animated README walkthrough
 ```
+
+Use Go 1.26.8 or newer, Git, GNU make, a POSIX shell, and a C compiler for `-race`.
+Windows can use a compatible native toolchain or WSL. Go sources use LF line
+endings for `gofmt` on every platform.
 
 The shipped module has **no third-party Go dependencies** and should stay that
 way: the value proposition is one binary with no language runtime or package
@@ -24,8 +28,9 @@ Apple's system Foundation/Metal frameworks.
 
 ## Ground rules
 
-- `gofmt` clean, `go vet ./...` clean, `go test ./...` green. CI enforces all
-  three plus `-race`.
+- `make fmt vet test build` must pass locally. `make test` includes `-race`.
+  The single push/manual CI workflow runs these targets, but GitHub Actions is
+  currently unavailable because of billing; its badge is not a validation gate.
 - Parsing logic (vendor CLI output, loader JSON) must be a **pure function**
   with a fixture-based test, so it can be verified without a GPU. See
   `internal/gpu/*_test.go` and `internal/loader/loader_test.go`.
@@ -45,8 +50,9 @@ Implement `gpu.Provider` (`Name`, `Vendor`, `Available`, `Sample`) and register
 it in `gpu.All()`. Keep the actual command execution thin and put the parsing in
 a tested pure function. Set `CapacitySource` and `UsageSource`; if usage cannot
 be queried, use `ProvenanceAssumed` so `fit` reports current availability as
-unknown. Apple platform providers also require native macOS CI coverage because
-the shipped implementation uses cgo and system frameworks.
+unknown. Changes to Apple platform providers need native macOS testing because
+the shipped implementation uses cgo and system frameworks. The regular CI job
+runs on Linux; release builds use native macOS runners.
 
 ## Adding a loader provider
 

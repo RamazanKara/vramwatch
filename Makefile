@@ -3,19 +3,20 @@ PKG     := ./cmd/vramwatch
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.Version=$(VERSION)"
 
-.PHONY: build test vet fmt tidy run watch demo card clean
+.PHONY: build test vet fmt tidy run watch demo card gif clean
 
 build: ## build the CLI
 	go build $(LDFLAGS) -o $(BINARY) $(PKG)
 
 test: ## run the test suite
-	go test ./...
+	go test -race ./...
 
 vet:
 	go vet ./...
 
 fmt: ## check formatting (fails if any file needs gofmt)
-	@test -z "$$(gofmt -l .)" || { echo "gofmt needed:"; gofmt -l .; exit 1; }
+	@files="$$(gofmt -l $$(git ls-files -co --exclude-standard '*.go'))" || exit 1; \
+		test -z "$$files" || { printf 'gofmt needed:\n%s\n' "$$files"; exit 1; }
 
 tidy:
 	go mod tidy

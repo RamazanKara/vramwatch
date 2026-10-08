@@ -13,6 +13,9 @@ func TestHumanBytes(t *testing.T) {
 		{3 * MiB / 2, "1.5 MiB"},
 		{24 * GiB, "24.00 GiB"},
 		{1073741824, "1.00 GiB"},
+		{TiB - 1, "1024.00 GiB"},
+		{TiB, "1.00 TiB"},
+		{^uint64(0), "16777216.00 TiB"},
 	}
 	for _, c := range cases {
 		if got := HumanBytes(c.in); got != c.want {

@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"flag"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -21,11 +24,17 @@ func capture(t *testing.T, fn func() error) (string, error) {
 		t.Fatal(err)
 	}
 	os.Stdout = w
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		_, _ = io.Copy(&buf, r)
+		r.Close()
+		close(done)
+	}()
 	runErr := fn()
 	w.Close()
 	os.Stdout = old
-	var buf bytes.Buffer
-	_, _ = io.Copy(&buf, r)
+	<-done
 	return buf.String(), runErr
 }
 
@@ -55,6 +64,75 @@ func TestCmdWatchBadSourceIsRuntimeError(t *testing.T) {
 	var ue *usageError
 	if errors.As(err, &ue) {
 		t.Error("bad source should be a runtime error, not a usage error")
+	}
+}
+
+func TestCmdWatchRejectsPositionalArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"typo", "--once"},
+		{"--source", "demo", "--once", "unexpected"},
+	} {
+		_, err := capture(t, func() error { return cmdWatch(args) })
+		var usage *usageError
+		if !errors.As(err, &usage) {
+			t.Errorf("cmdWatch(%q) error = %v, want usage error", args, err)
+		}
+	}
+}
+
+func TestDoctorLoaderDiagnostics(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		ps     string
+		status string
+	}{
+		{"idle loader", `{"models":[]}`, "warn"},
+		{"resident model", `{"models":[{"name":"fixture","size_vram":1024}]}`, "pass"},
+		{"invalid response", `{`, "fail"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("VRAMWATCH_STATE_DIR", t.TempDir())
+			t.Setenv("PATH", t.TempDir())
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/version":
+					w.Write([]byte(`{"version":"fixture"}`))
+				case "/api/ps":
+					w.Write([]byte(tc.ps))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			t.Setenv("OLLAMA_HOST", srv.URL)
+			t.Setenv("LLAMACPP_HOST", srv.URL)
+			out, err := capture(t, func() error { return cmdDoctor([]string{"--json", "--verbose"}) })
+			var result doctorEnvelope
+			if e := json.Unmarshal([]byte(out), &result); e != nil {
+				t.Fatal(e)
+			}
+			if result.SchemaVersion != 1 || result.Command != "doctor" || result.Healthy != (err == nil) {
+				t.Fatalf("envelope = %+v, error = %v", result, err)
+			}
+			if !result.Healthy {
+				var exit *exitError
+				if !errors.As(err, &exit) || exit.code != 1 {
+					t.Fatalf("unhealthy doctor error = %v", err)
+				}
+			}
+			found := false
+			for _, check := range result.Checks {
+				if check.ID == "loader.ollama" {
+					found = true
+					if check.Status != tc.status || (tc.status == "fail" && (check.Evidence == "" || check.Remediation == "")) {
+						t.Errorf("loader check = %+v", check)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing loader diagnostic")
+			}
+		})
 	}
 }
 

@@ -155,7 +155,7 @@ func cmdDoctor(args []string) error {
 		}
 	}
 	if *online {
-		for _, endpoint := range []struct{ id, url string }{{"registry.ollama", "https://registry.ollama.ai/v2/"}, {"registry.huggingface", "https://huggingface.co/api/models?limit=1"}} {
+		for _, endpoint := range []struct{ id, url string }{{"registry.ollama", "https://registry.ollama.ai/v2/library/llama3.2/manifests/3b-instruct-q4_K_M"}, {"registry.huggingface", "https://huggingface.co/api/models?limit=1"}} {
 			req, _ := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.url, nil)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {

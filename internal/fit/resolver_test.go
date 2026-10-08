@@ -225,6 +225,39 @@ func TestResolveRefusesIgnoredLargeRange(t *testing.T) {
 	}
 }
 
+func TestResolveOllamaRequiresEveryWeightLayerSize(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		modelSize uint64
+		projector uint64
+		wantErr   bool
+	}{
+		{"complete", 4 * model.GiB, model.GiB, false},
+		{"unknown model", 0, model.GiB, true},
+		{"unknown projector", 4 * model.GiB, 0, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			manifest := fmt.Sprintf(`{"layers":[{"mediaType":"application/vnd.ollama.image.model","digest":"sha256:model","size":%d},{"mediaType":"application/vnd.ollama.image.projector","digest":"sha256:projector","size":%d}]}`, tc.modelSize, tc.projector)
+			blobReads := 0
+			client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if strings.Contains(req.URL.Path, "/manifests/") {
+					return response(http.StatusOK, manifest, nil), nil
+				}
+				blobReads++
+				return response(http.StatusPartialContent, string(fitGGUF(15)), nil), nil
+			})}
+			a, err := Resolve(context.Background(), "ollama:model", ResolveOptions{Client: client})
+			if tc.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "unknown model/projector layer size") || blobReads != 0 {
+					t.Fatalf("incomplete manifest: error = %v, blob reads = %d", err, blobReads)
+				}
+			} else if err != nil || a.WeightBytes != tc.modelSize+tc.projector || blobReads != 1 {
+				t.Fatalf("complete manifest: size = %d, blob reads = %d, error = %v", a.WeightBytes, blobReads, err)
+			}
+		})
+	}
+}
+
 func TestSelectHFGroupValidatesShards(t *testing.T) {
 	if _, err := selectHFGroup([]hfFile{{Name: "m-Q4_K_M-00001-of-00002.gguf", Size: 1}}); err == nil {
 		t.Error("incomplete shard set should fail")

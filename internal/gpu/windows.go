@@ -62,10 +62,10 @@ func (Windows) Sample(ctx context.Context) ([]model.GPU, error) {
 
 	// Device usage comes from the GPU Adapter Memory perf counter, keyed by an
 	// opaque adapter LUID. We can only map it to a physical card unambiguously
-	// when there is exactly one non-NVIDIA GPU (the common case). With several,
+	// when there is exactly one dedicated GPU, including NVIDIA. With several,
 	// there is no reliable LUID<->registry join, so usage is left unknown (the
 	// card reports full free) rather than guessed onto the wrong device.
-	if len(gpus) == 1 {
+	if len(gpus) == 1 && singleDedicatedAdapter(qw) {
 		if out, err := run(ctx, "typeperf", `\GPU Adapter Memory(*)\Dedicated Usage`, "-sc", "1"); err == nil {
 			values := parseTypeperfAdapter(out)
 			var used uint64

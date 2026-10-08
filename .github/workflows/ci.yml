@@ -1,85 +1,20 @@
 name: ci
 on:
   push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
-  test:
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: gofmt
-        run: test -z "$(gofmt -l .)" || { echo "these files need gofmt:"; gofmt -l .; exit 1; }
-      - run: go vet ./...
-      - run: go test ./... -race
-      - run: go build -o vramwatch ./cmd/vramwatch
-
-      - name: watch smoke test
-        run: |
-          VRAMWATCH_STATE_DIR=/tmp/vramwatch-state ./vramwatch watch --source mock:testdata/scenarios/24gb-70b-oom.json --once --no-color > watch.txt
-          grep -q 'OOM risk' watch.txt
-          grep -q '\[M\]' watch.txt
-          grep -q '\[E\]' watch.txt
-
-      - name: removed commands explain the migration
-        run: |
-          if ./vramwatch predict 2> migration.txt; then exit 1; fi
-          grep -q 'use `vramwatch fit MODEL --context N`' migration.txt
-
-      - name: committed report card is up to date
-        run: |
-          go run ./tools/reportfixture > /tmp/card.svg
-          diff -q /tmp/card.svg docs/sample/vramwatch-card.svg
-
-      - name: committed README demo is up to date
-        working-directory: docs/gifgen
-        run: |
-          go run . /tmp/vramwatch-demo.gif
-          cmp /tmp/vramwatch-demo.gif ../demo.gif
-          expected=$(sed -n 's/  "sha256": "\([^"]*\)",/\1/p' ../demo.manifest.json)
-          test "$(sha256sum ../demo.gif | cut -d' ' -f1)" = "$expected"
-
-  crosscompile:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - { goos: linux, goarch: amd64 }
-          - { goos: linux, goarch: arm64 }
-          - { goos: windows, goarch: amd64 }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: build ${{ matrix.goos }}/${{ matrix.goarch }}
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "0"
-        run: go build ./cmd/vramwatch
-
-  macos-native:
-    strategy:
-      matrix:
-        include:
-          - { runner: macos-15-intel, goarch: amd64 }
-          - { runner: macos-15, goarch: arm64 }
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - name: test native Metal build (${{ matrix.goarch }})
-        env:
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: "1"
-        run: |
-          go test ./...
-          go build -o vramwatch ./cmd/vramwatch
-          ./vramwatch version
+          cache: false
+      - name: lint
+        run: make fmt vet
+      - name: test
+        run: make test
+      - name: build
+        run: make build

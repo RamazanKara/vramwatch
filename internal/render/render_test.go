@@ -39,6 +39,8 @@ func TestJSONSchemaStable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read golden (generate it with -update-golden): %v", err)
 	}
+	// Git may check out the text fixture with CRLF on Windows.
+	want = bytes.ReplaceAll(want, []byte("\r\n"), []byte("\n"))
 	if !bytes.Equal(data, want) {
 		t.Errorf("--json schema changed. If this is intentional, regenerate the golden:\n"+
 			"  go test ./internal/render -run JSONSchemaStable -update-golden\n\ngot:\n%s", data)

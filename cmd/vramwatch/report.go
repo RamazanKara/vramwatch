@@ -226,6 +226,9 @@ func measuredLoaderFootprint(gpu model.GPU, models []model.LoaderModel) uint64 {
 }
 
 func recordMatchesModel(rec ledger.Record, m model.LoaderModel) bool {
+	if rec.Loader != "" && rec.Loader != "auto" && !strings.EqualFold(rec.Loader, m.Loader) {
+		return false
+	}
 	a := rec.Prediction.Artifact
 	// Ollama exposes the manifest digest for a running model. Other artifact
 	// sources use different digest namespaces (for example a Hub commit), so only

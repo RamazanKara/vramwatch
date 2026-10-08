@@ -2,6 +2,7 @@ package gpu
 
 import (
 	"encoding/csv"
+	"math"
 	"strconv"
 	"strings"
 
@@ -55,6 +56,16 @@ func parseRegUint(s string) uint64 {
 	return n
 }
 
+func singleDedicatedAdapter(capacities map[string]string) bool {
+	count := 0
+	for _, raw := range capacities {
+		if parseRegUint(raw) > 0 {
+			count++
+		}
+	}
+	return count == 1
+}
+
 // looksNVIDIA reports whether a device description names an NVIDIA GPU. It's a
 // fallback for the NVIDIA skip when the PCI vendor id can't be read (e.g. the
 // MatchingDeviceId registry query failed), so the Windows provider never
@@ -105,8 +116,12 @@ func parseTypeperfAdapter(out string) map[string]uint64 {
 		if kind != "adapter" {
 			continue
 		}
+		used, err := strconv.ParseFloat(strings.TrimSpace(data[i]), 64)
+		if err != nil || math.IsNaN(used) || math.IsInf(used, 0) || used < 0 || used >= float64(^uint64(0)) {
+			continue
+		}
 		luid := strings.TrimPrefix(inst, "luid_")
-		res[luid] += parseFloatBytes(data[i])
+		res[luid] += uint64(used)
 	}
 	return res
 }
@@ -127,14 +142,6 @@ func parseGPUCounter(col string) (instance, kind string) {
 		kind = "process"
 	}
 	return instance, kind
-}
-
-func parseFloatBytes(s string) uint64 {
-	f, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
-	if err != nil || f < 0 {
-		return 0
-	}
-	return uint64(f)
 }
 
 // readCSVRows parses typeperf/tasklist CSV output, tolerating the non-CSV

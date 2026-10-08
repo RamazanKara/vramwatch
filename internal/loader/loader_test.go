@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -236,15 +237,30 @@ func TestLlamaCppWithGGUF(t *testing.T) {
 }
 
 func TestIsLocalURL(t *testing.T) {
-	for _, b := range []string{"http://127.0.0.1:8080", "http://localhost:8080", "http://[::1]:8080", "http://127.0.0.53:11434"} {
-		if !isLocalURL(b) {
-			t.Errorf("%s should be local", b)
-		}
-	}
-	for _, b := range []string{"http://192.168.1.50:8080", "http://box.lan:8080", "http://10.0.0.5:8080"} {
-		if isLocalURL(b) {
-			t.Errorf("%s should be treated as remote", b)
-		}
+	for _, tc := range []struct {
+		url   string
+		local bool
+	}{
+		{"http://127.0.0.1:8080", true},
+		{"http://localhost:8080", true},
+		{"http://LOCALHOST:8080", true},
+		{"http://[::1]:8080", true},
+		{"http://[::ffff:127.0.0.1]:8080", true},
+		{"http://127.0.0.53:11434", true},
+		{"http://192.168.1.50:8080", false},
+		{"http://box.lan:8080", false},
+		{"http://127.example.com:8080", false},
+		{"http://127.0.0.1.example.com:8080", false},
+		{"http://localhost.example.com:8080", false},
+		{"http://127.999.0.1:8080", false},
+		{"http://[invalid", false},
+		{"", false},
+	} {
+		t.Run(tc.url, func(t *testing.T) {
+			if got := isLocalURL(tc.url); got != tc.local {
+				t.Errorf("isLocalURL(%q) = %v, want %v", tc.url, got, tc.local)
+			}
+		})
 	}
 }
 
@@ -339,6 +355,70 @@ func TestBaseNameSeparators(t *testing.T) {
 	for in, want := range cases {
 		if got := baseName(in); got != want {
 			t.Errorf("baseName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestLoaderHTTPErrors(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"not found", http.StatusNotFound, `not found`},
+		{"unavailable", http.StatusServiceUnavailable, `unavailable`},
+		{"invalid JSON", http.StatusOK, `{`},
+		{"empty response", http.StatusOK, ``},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+			for _, p := range []Provider{NewOllama(srv.URL), NewLlamaCpp(srv.URL)} {
+				if available := p.Available(context.Background()); available != (tc.status == http.StatusOK) {
+					t.Errorf("%s availability = %v", p.Name(), available)
+				}
+				models, err := p.Models(context.Background())
+				if err == nil || len(models) != 0 {
+					t.Fatalf("%s models = %v, error = %v", p.Name(), models, err)
+				}
+				if tc.status != http.StatusOK {
+					var he *httpError
+					if !errors.As(err, &he) || he.code != tc.status || !strings.Contains(err.Error(), srv.URL) {
+						t.Errorf("%s HTTP error = %v", p.Name(), err)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestOllamaRetriesFailedArchitectureLookup(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/ps":
+			w.Write([]byte(`{"models":[{"model":"fixture","size_vram":1024,"context_length":8192}]}`))
+		case "/api/show":
+			if atomic.AddInt32(&calls, 1) == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			w.Write([]byte(`{"model_info":` + llama3ModelInfo + `}`))
+		}
+	}))
+	defer srv.Close()
+	o := NewOllama(srv.URL)
+	for attempt := 0; attempt < 2; attempt++ {
+		models, err := o.Models(context.Background())
+		if err != nil || len(models) != 1 {
+			t.Fatalf("attempt %d: models = %v, error = %v", attempt, models, err)
+		}
+		m := models[0]
+		if m.Name != "fixture" || m.VRAMBytes != 1024 || m.ContextTokens != 8192 || m.Arch.KnownForKV() != (attempt == 1) {
+			t.Errorf("attempt %d: model = %+v", attempt, m)
 		}
 	}
 }

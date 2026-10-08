@@ -1,10 +1,37 @@
 package gpu
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/RamazanKara/vramwatch/internal/model"
 )
+
+func TestParseTypeperfAdapterUsage(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		known bool
+		bytes uint64
+	}{
+		{"0.000000", true, 0},
+		{" 1024.000000 ", true, 1024},
+		{"", false, 0},
+		{"N/A", false, 0},
+		{"-1", false, 0},
+		{"NaN", false, 0},
+		{"+Inf", false, 0},
+		{"1e100", false, 0},
+		{"18446744073709551616", false, 0},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			csv := fmt.Sprintf("\"(PDH-CSV 4.0)\",\"GPU Adapter Memory(luid_gpu)\\Dedicated Usage\"\n\"time\",\"%s\"\n", tc.value)
+			got, known := parseTypeperfAdapter(csv)["gpu"]
+			if known != tc.known || got != tc.bytes {
+				t.Errorf("usage = %d, known = %v; want %d, %v", got, known, tc.bytes, tc.known)
+			}
+		})
+	}
+}
 
 // Fixtures below are real output captured from an AMD Radeon RX 7900 XT on
 // Windows 11 (typeperf + reg query).
@@ -107,5 +134,26 @@ func TestParseRegUint(t *testing.T) {
 		if got := parseRegUint(in); got != want {
 			t.Errorf("parseRegUint(%q) = %d, want %d", in, got, want)
 		}
+	}
+}
+
+func TestSingleDedicatedAdapter(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		capacities map[string]string
+		single     bool
+	}{
+		{"none", nil, false},
+		{"AMD", map[string]string{"amd": "0x4ff000000"}, true},
+		{"software adapter", map[string]string{"amd": "0x4ff000000", "software": "0"}, true},
+		{"mixed vendors", map[string]string{"amd": "0x4ff000000", "nvidia": "0x600000000"}, false},
+		{"two AMD cards", map[string]string{"amd0": "0x4ff000000", "amd1": "0x4ff000000"}, false},
+		{"unknown capacity", map[string]string{"unknown": "N/A"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := singleDedicatedAdapter(tc.capacities); got != tc.single {
+				t.Errorf("single dedicated adapter = %v, want %v", got, tc.single)
+			}
+		})
 	}
 }

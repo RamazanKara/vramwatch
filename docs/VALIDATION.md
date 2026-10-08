@@ -3,14 +3,64 @@
 Validation has two layers. Hardware-free contract tests cover bounded remote GGUF
 resolution, sharded-size accounting, quant selection, exact KV arithmetic,
 overflow fail-closed behavior, current-vs-capacity verdicts, local ledger pairing,
-privacy-safe SVG rendering, and all vendor/loader parsers. The measurements below
-were also produced on real hardware and cross-checked against independent ground
-truth.
+privacy-safe SVG rendering, and all vendor/loader parsers. Historical hardware measurements below are retained from earlier runs; they are
+not new measurements of this revision.
 
 The new `conservative-v1` preflight policy still needs a broad public accuracy
 corpus across backends, model families, and drivers. The local prediction ledger
 and `report` accuracy card exist specifically to make those field results
 comparable without telemetry.
+
+## Maintenance checks, 2026-10-09
+
+On Windows 11/amd64 with Go 1.26.8, the CLI examples exercised local GGUF fit,
+Ollama and Hugging Face metadata, inferred Hub references, explicit file/revision
+selection, direct HTTPS GGUF ranges, quantized KV, manual budgets, JSON, exit
+codes, demo/mock watch, doctor, and report SVG creation/overwrite protection.
+Local-path examples used a small synthetic GGUF; no full model was downloaded.
+The installed Go command and the checksum-verified v0.7.1 Windows release binary
+both ran successfully. License/release/CLI dependency badges returned HTTP 200.
+The CI badge was removed because Actions is unavailable due to billing.
+
+The Windows provider detected an AMD Radeon 780M. No inference loader was
+running, so doctor correctly failed the loader check; live model attribution and
+accuracy remain unverified in this pass. Registry probes are checked separately.
+Linux amd64 and arm64 cross-builds passed.
+WSL was blocked by the sandbox with `E_ACCESSDENIED`; native Linux/macOS execution,
+Linux procfs, Metal, the shell installer, and CI/release execution were not
+revalidated here. The historical field results below should not be read as
+coverage of those gaps.
+
+Statement coverage on Windows/amd64 (Go 1.26.8):
+
+| Package | Before | After |
+|---|---:|---:|
+| total | 65.5% | 71.0% |
+| internal/model | 65.2% | 69.6% |
+| internal/engine | 90.3% | 90.3% |
+| internal/source | 34.1% | 86.4% |
+| internal/render | 85.4% | 85.4% |
+| internal/fit | 76.5% | 76.9% |
+| internal/loader | 72.2% | 78.4% |
+| internal/gpu | 71.6% | 72.1% |
+| internal/gguf | 73.4% | 73.4% |
+| internal/ledger | 70.5% | 72.7% |
+| cmd/vramwatch | 40.5% | 54.4% |
+| tools/reportfixture | 0.0% | 0.0% |
+
+The baseline failed two Unix-mode permission assertions and a CRLF-sensitive
+JSON golden comparison on Windows. These checks are now portable. The final
+`make fmt vet test build` gate passes; `make test` includes `-race`. The final
+coverage profile combines the full race-enabled run with the refreshed GPU
+package run after the mixed-adapter fix. `make card` and `make gif` regenerate
+the committed assets unchanged (SVG line endings normalized). `make run` passed;
+`make demo` displayed its loop and was stopped after sampling.
+
+Both modules were tidied; Go is now pinned to 1.26.8 and the GIF generator uses
+`golang.org/x/image` v0.46.0. Source `govulncheck` scans of both modules found no
+vulnerabilities with Go 1.26.8. The existing v0.7.1 Windows release binary, built
+with Go 1.26.3, flags 13 standard-library advisories in a binary scan. Those
+archives were not republished in this maintenance pass.
 
 ## Live registry metadata smoke, 2026-07-18
 
@@ -53,14 +103,14 @@ Total was 19.98 GiB, matching the registry `qwMemorySize` (`0x4ff000000`).
 
 ### Weights / KV split (Ollama loader + KV formula)
 
-With `qwen2.5:0.5b` resident on the GPU, Ollama's `/api/ps` reported
-`size_vram = 459 MB`. vramwatch reads the model's GGUF blob (via the path in
+With `qwen2.5:0.5b` resident on the GPU, the original run recorded the
+following MiB breakdown. vramwatch reads the model's GGUF blob (via the path in
 `/api/show`) for the exact GGUF file size used as estimated residency, and splits
 that footprint as:
 
 - weights **379.4 MiB** (GGUF blob size, treated as estimated full-offload
   residency) + KV cache **48 MiB** + compute
-  **32.1 MiB** = **459.5 MiB ≈ 459 MB**. The split sums to Ollama's own reported
+  **32.1 MiB** = **459.5 MiB** (about 482 MB). The split sums to Ollama's own reported
   VRAM, with the compute/scratch VRAM correctly separated from the weights.
 
 The KV figure matches the model's real architecture exactly. `/api/show` reports
@@ -80,14 +130,14 @@ grow exactly 4×.
 ## llama.cpp + a real GGUF, Windows 11
 
 Loader: llama.cpp `llama-server` b9873 (Vulkan backend on the same RX 7900 XT),
-serving the qwen2.5:0.5b GGUF (379 MB q4) with `-ngl 99`.
+serving the qwen2.5:0.5b GGUF (379.4 MiB q4) with `-ngl 99`.
 
 This exercises a completely different code path from Ollama: vramwatch reads
 `/props` for the model path and context, then parses the **GGUF file header
 directly** for the architecture and weight size (the Ollama path gets those from
 `/api/show` instead). Both reached the same answer:
 
-- weights **379.4 MiB**, the GGUF file's actual size on disk (379 MB), used as an
+- weights **379.4 MiB**, the GGUF file's recorded size on disk, used as an
   estimated full-offload residency value.
 - KV cache **48 MiB** at ctx 4096, i.e. the same 12 KiB/token the Ollama run
   produced, because the GGUF parser recovered the same arch (24 layers, 2 KV heads,
@@ -121,4 +171,4 @@ validation step:
   filing these results.
 
 If you run vramwatch on your hardware, posting the result (and any mismatch) is the
-most useful contribution. See the issues link in the README.
+most useful contribution. See the [issue tracker](https://github.com/RamazanKara/vramwatch/issues).

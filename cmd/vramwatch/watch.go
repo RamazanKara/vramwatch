@@ -31,6 +31,9 @@ func cmdWatch(args []string) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
+	if fs.NArg() != 0 {
+		return &usageError{fmt.Errorf("watch takes no positional arguments")}
+	}
 	kvBits, err := resolveKVBits(*kvType)
 	if err != nil {
 		return err
@@ -111,6 +114,7 @@ var watchTrack watchTrackState
 func trackWatchPrediction(snap model.Snapshot) string {
 	records, err := ledger.List()
 	if err != nil {
+		watchTrack = watchTrackState{}
 		return ""
 	}
 	for _, bd := range snap.Breakdowns {
@@ -124,6 +128,7 @@ func trackWatchPrediction(snap model.Snapshot) string {
 			return trackWatchBreakdown(rec, bd)
 		}
 	}
+	watchTrack = watchTrackState{}
 	return ""
 }
 
@@ -146,6 +151,7 @@ func trackWatchBreakdown(rec ledger.Record, bd model.Breakdown) string {
 		source = bd.Models[0].Loader + " model footprint"
 	}
 	if fp == 0 {
+		watchTrack = watchTrackState{}
 		return ""
 	}
 	if watchTrack.id != rec.ID {
@@ -157,8 +163,8 @@ func trackWatchBreakdown(rec ledger.Record, bd model.Breakdown) string {
 		} else {
 			watchTrack.stable = 1
 			watchTrack.recorded = false
+			watchTrack.last = fp
 		}
-		watchTrack.last = fp
 	}
 	if watchTrack.stable >= 3 && !watchTrack.recorded {
 		if _, err := ledger.UpdateObservation(rec.ID, fp, prov, source); err == nil {

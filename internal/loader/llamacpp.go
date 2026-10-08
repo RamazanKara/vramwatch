@@ -2,6 +2,7 @@ package loader
 
 import (
 	"context"
+	"net"
 	"net/url"
 	"strings"
 
@@ -72,7 +73,7 @@ func isLocalURL(base string) bool {
 		return false
 	}
 	host := u.Hostname()
-	return host == "localhost" || host == "::1" || strings.HasPrefix(host, "127.")
+	return strings.EqualFold(host, "localhost") || net.ParseIP(host).IsLoopback()
 }
 
 func parseLlamaProps(props propsResponse) []model.LoaderModel {

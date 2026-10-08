@@ -67,7 +67,6 @@ func LoadMock(path string) (*Mock, error) {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parse scenario %s: %w", path, err)
 	}
-	// Default unspecified GPU indices to their slice position.
 	for i := range s.GPUs {
 		if s.GPUs[i].Vendor == "" {
 			s.GPUs[i].Vendor = model.VendorUnknown

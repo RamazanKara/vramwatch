@@ -15,12 +15,13 @@ to Hugging Face metadata requests and is not written to the report card.
 
 ```sh
 vramwatch fit ollama:llama3.2:3b-instruct --quant q4_k_m --context 32768
-vramwatch fit hf:owner/repo --quant q4_k_m --context 32768
-vramwatch fit owner/repo --quant q4_k_m --context 32768  # inferred Hugging Face
+vramwatch fit hf:bartowski/Llama-3.2-1B-Instruct-GGUF --quant q4_k_m --context 32768
+vramwatch fit bartowski/Llama-3.2-1B-Instruct-GGUF --quant q4_k_m --context 32768  # inferred Hugging Face
 vramwatch fit /models/model.gguf --context 32768
 vramwatch fit https://host/model.gguf --context 32768
 ```
 
+The local path and HTTPS host above are placeholders for your own artifact.
 Use `--file` when a Hub repository contains more than one matching GGUF. For an
 Ollama name containing `/`, keep the explicit `ollama:` prefix so it is not
 interpreted as a Hugging Face repository.
@@ -77,7 +78,7 @@ memory than the full GGUF size. Those require loader-specific planners.
 ### Why does `report` say accuracy is pending?
 
 The saved prediction has not been matched to a resident model yet. Load the same
-model with the same quant and context, then run `vramwatch watch` or
+model with the requested loader, quant and context, then run `vramwatch watch` or
 `vramwatch report` again. Pairing is deliberately strict and requires exactly one
 resident model on the device so an unrelated allocation is not scored as the
 prediction.
@@ -85,7 +86,7 @@ prediction.
 You can select a non-latest record with:
 
 ```sh
-vramwatch report --prediction 0123456789abcdef
+vramwatch report --prediction ID   # use the record_id returned by fit --json
 ```
 
 ### Where is prediction history stored?
@@ -94,8 +95,9 @@ vramwatch report --prediction 0123456789abcdef
 - macOS: `~/Library/Application Support/vramwatch`
 - Windows: `%LOCALAPPDATA%\vramwatch`
 
-Override it with `VRAMWATCH_STATE_DIR`. Each prediction is a private JSON file;
-there is no telemetry service. Use `fit --no-record` to disable persistence for a
+Override it with `VRAMWATCH_STATE_DIR`. Unix uses private file modes; Windows
+inherits directory ACLs, so keep overrides in a private directory. There is no
+telemetry service. Use `fit --no-record` to disable persistence for a
 single prediction.
 
 ### Is the SVG safe to share?
@@ -110,8 +112,9 @@ original model reference and should be treated as local diagnostic data.
 ### Does vramwatch phone home?
 
 There is no account or telemetry. `watch` and normal `doctor` use local drivers and
-loopback loader APIs. Remote `fit` necessarily contacts the selected Hugging Face
-or Ollama registry for metadata. `doctor --online` makes explicit registry probes.
+configured loader APIs, defaulting to loopback. `OLLAMA_HOST` and `LLAMACPP_HOST`
+can point to remote servers. Remote `fit` contacts the selected Hugging Face or
+Ollama registry, or the supplied HTTPS URL. `doctor --online` makes explicit registry probes.
 
 ### What does Apple support mean when memory is unified?
 

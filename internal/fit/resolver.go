@@ -366,6 +366,9 @@ func (r *resolver) resolveOllama(ctx context.Context, name string) (Artifact, er
 	var modelDigest string
 	for _, l := range manifest.Layers {
 		if l.MediaType == "application/vnd.ollama.image.model" || strings.Contains(l.MediaType, "projector") {
+			if l.Size == 0 {
+				return Artifact{}, errors.New("Ollama manifest has an unknown model/projector layer size; refusing an optimistic fit prediction")
+			}
 			weight = saturatingAdd(weight, l.Size)
 			if modelDigest == "" && l.MediaType == "application/vnd.ollama.image.model" {
 				modelDigest = l.Digest

@@ -302,6 +302,79 @@ func TestLoaderVRAMProvenancePreservesEstimate(t *testing.T) {
 	}
 }
 
+func TestRecordMatchesModelRequiresRequestedLoader(t *testing.T) {
+	for _, tc := range []struct {
+		requested string
+		resident  string
+		match     bool
+	}{
+		{"ollama", "ollama", true},
+		{"llama.cpp", "llama.cpp", true},
+		{"ollama", "llama.cpp", false},
+		{"llama.cpp", "ollama", false},
+		{"ollama", "", false},
+		{"", "ollama", true},
+		{"auto", "llama.cpp", true},
+	} {
+		t.Run(tc.requested+"/"+tc.resident, func(t *testing.T) {
+			rec := ledger.Record{Loader: tc.requested, Prediction: fitengine.Result{
+				Artifact: fitengine.Artifact{CanonicalID: "model", Quantization: "Q4_K_M"}, Context: 4096,
+			}}
+			m := model.LoaderModel{Loader: tc.resident, Name: "model", Quantization: "Q4_K_M", ContextTokens: 4096}
+			if got := recordMatchesModel(rec, m); got != tc.match {
+				t.Errorf("match = %v, want %v", got, tc.match)
+			}
+		})
+	}
+}
+
+func TestWatchRequiresConsecutiveStableObservations(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		samples []uint64
+		record  bool
+	}{
+		{"stable", []uint64{1000, 1001, 1002}, true},
+		{"too few", []uint64{1000, 1001}, false},
+		{"drifting", []uint64{1000, 1019, 1038}, false},
+		{"model disappeared", []uint64{1000, 1001, 0, 1002}, false},
+		{"stable after gap", []uint64{1000, 0, 1000, 1001, 1002}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("VRAMWATCH_STATE_DIR", t.TempDir())
+			watchTrack = watchTrackState{}
+			t.Cleanup(func() { watchTrack = watchTrackState{} })
+			rec, err := ledger.Save(fitengine.Result{
+				Artifact: fitengine.Artifact{CanonicalID: "model", Quantization: "Q4_K_M"},
+				Context:  4096, ExpectedFootprintBytes: 1100,
+			}, "ollama")
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, fp := range tc.samples {
+				snap := model.Snapshot{}
+				if fp > 0 {
+					snap.Breakdowns = []model.Breakdown{{Models: []model.LoaderModel{{
+						Loader: "ollama", Name: "model", Quantization: "Q4_K_M", ContextTokens: 4096,
+						VRAMBytes: fp, VRAMSource: model.ProvenanceReported,
+					}}}}
+				}
+				trackWatchPrediction(snap)
+			}
+			got, err := ledger.Load(rec.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if (got.Observation != nil) != tc.record {
+				t.Fatalf("observation = %+v, want recorded = %v", got.Observation, tc.record)
+			}
+			if tc.record && (got.Observation.FootprintBytes != 1002 || got.Observation.Provenance != model.ProvenanceReported) {
+				t.Errorf("observation = %+v", got.Observation)
+			}
+		})
+	}
+}
+
 func TestUsageContainsLaunchPositioning(t *testing.T) {
 	want := "vramwatch — see why your local LLM ran out of GPU memory and determine what will fit before loading it."
 	if !strings.HasPrefix(usage, want) {

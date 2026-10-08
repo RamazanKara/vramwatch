@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestSaveLoadLatestAndObservation(t *testing.T) {
 	path := filepath.Join(state, "predictions", first.ID+".json")
 	if st, err := os.Stat(path); err != nil {
 		t.Fatal(err)
-	} else if st.Mode().Perm()&0o077 != 0 {
+	} else if runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0 {
 		t.Errorf("ledger record permissions = %o, want private", st.Mode().Perm())
 	}
 }
@@ -160,7 +161,37 @@ func TestWriteRejectsOversizedRecordAndTightensDirectory(t *testing.T) {
 	}
 	if st, err := os.Stat(dir); err != nil {
 		t.Fatal(err)
-	} else if st.Mode().Perm()&0o077 != 0 {
+	} else if runtime.GOOS != "windows" && st.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("ledger directory permissions = %o, want private", st.Mode().Perm())
+	}
+}
+
+func TestLoadRejectsCorruptRecords(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{"malformed JSON", `{`},
+		{"unsupported schema", `{"schema_version":2,"id":"0123456789abcdef"}`},
+		{"mismatched ID", `{"schema_version":1,"id":"fedcba9876543210"}`},
+		{"oversized", strings.Repeat(" ", maxRecordBytes+1)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			state := t.TempDir()
+			t.Setenv("VRAMWATCH_STATE_DIR", state)
+			dir := filepath.Join(state, "predictions")
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "0123456789abcdef.json"), []byte(tc.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load("0123456789abcdef"); err == nil {
+				t.Fatal("corrupt record was accepted")
+			}
+			if records, err := List(); err != nil || len(records) != 0 {
+				t.Fatalf("corrupt records should not enter history: %v, %v", records, err)
+			}
+		})
 	}
 }
