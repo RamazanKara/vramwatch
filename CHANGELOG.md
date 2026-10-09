@@ -6,6 +6,16 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `watch --json` emits timestamped NDJSON snapshots for continuous collection or
+  `--once` automation, retaining provenance and stable-observation recording.
+- `fit` shows estimated maximum context on each accelerator and right now,
+  including the existing runtime ceiling, safety reserve, quantized KV rounding,
+  and known model context limit. Unknown budgets remain distinct from zero.
+- `report --markdown` produces privacy-scrubbed, escaped text for issues and
+  discussions, with stdout/file output, `--static`, and overwrite protection.
+
 ### Security
 
 - Require Go 1.27.2 for the CLI, CI, and standalone GIF generator, incorporating
@@ -14,6 +24,8 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Saturated fit requirements cannot produce a successful verdict against a
+  maximum-byte budget or an optimistic maximum-context recommendation.
 - Make demo timing and ledger ordering tests deterministic, close test pipe
   readers, and isolate report tests from live GPU tools and loader endpoints.
 - Run the local test gate without `-race` when cgo is disabled, with an explicit
@@ -21,6 +33,10 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Testing and release
 
+- Add table-driven output/context tests and fuzz checks for context boundaries
+  and Markdown escaping. Keep one CI workflow running the local make gate;
+  Staticcheck and govulncheck targets cover both Go modules. Release builds and
+  publication are prepared manually as documented in `docs/RELEASING.md`.
 - Fuzz GGUF headers in memory and add small seeds for GPU output, loader metadata,
   artifact references, and CLI byte-size parsing.
 - Document local cross-platform builds, native macOS Metal builds, SHA-256

@@ -6,11 +6,12 @@ attribution.
 
 ## Development
 
+Install the check tools as described in [the release guide](docs/RELEASING.md#gate), then run the local targets below.
+
 ```sh
 git clone https://github.com/RamazanKara/vramwatch
 cd vramwatch
-make fmt vet test      # format check, vet, and tests (race-enabled with cgo)
-make build             # build ./vramwatch
+make fmt vet staticcheck test build vuln
 make demo              # live TUI against the synthetic demo source
 make gif               # regenerate the animated README walkthrough
 ```
@@ -30,7 +31,8 @@ Apple's system Foundation/Metal frameworks.
 
 ## Ground rules
 
-- `make fmt vet test build` must pass locally. `make test` includes `-race` when cgo is enabled.
+- `make fmt vet staticcheck test build vuln` must pass locally. Checks cover both
+  Go modules; `make test` includes `-race` when cgo is enabled.
   The single push/manual CI workflow runs these targets, but GitHub Actions is
   currently unavailable because of billing; its badge is not a validation gate.
 - Parsing logic (vendor CLI output, loader JSON) must be a **pure function**
@@ -43,7 +45,7 @@ Apple's system Foundation/Metal frameworks.
   as ground truth.
 - Fit must fail closed. Unknown artifact size, incomplete architecture/shards, or
   arithmetic overflow may not degrade to a smaller optimistic prediction.
-- Shareable SVGs may not gain hostnames, paths, URL queries, PIDs, bus IDs, or
+- Shareable SVG/Markdown reports may not gain hostnames, paths, URL queries, PIDs, bus IDs, or
   hardware serials. Add a privacy regression test for any new field.
 
 ## Adding a GPU provider
@@ -54,7 +56,7 @@ a tested pure function. Set `CapacitySource` and `UsageSource`; if usage cannot
 be queried, use `ProvenanceAssumed` so `fit` reports current availability as
 unknown. Changes to Apple platform providers need native macOS testing because
 the shipped implementation uses cgo and system frameworks. The regular CI job
-runs on Linux; release builds use native macOS runners.
+runs on Linux; macOS releases must be built and checked on native Macs.
 
 ## Adding a loader provider
 

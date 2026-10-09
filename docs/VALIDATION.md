@@ -11,7 +11,37 @@ corpus across backends, model families, and drivers. The local prediction ledger
 and `report` accuracy card exist specifically to make those field results
 comparable without telemetry.
 
-## Maintenance checks, 2026-10-09
+## Feature-round checks, 2026-10-09
+On Windows 11/amd64 with Go 1.27.2 and `CGO_ENABLED=1`, the full local gate
+passed: `make fmt vet staticcheck test build vuln VERSION=v0.8.0-local`.
+Both the root module and `docs/gifgen` passed vet, Staticcheck, and tests;
+race detection was enabled. Govulncheck v1.8.0 found no vulnerabilities in
+either module. GitHub Actions was unavailable and was not run.
+Staticcheck v0.8.1's bundled export-data reader rejected Go 1.27 packages.
+Building it in an isolated tools module with `golang.org/x/tools` v0.50.0
+resolved that incompatibility, as documented in [the release guide](RELEASING.md).
+The CLI modules and their dependencies were unchanged. Go and Staticcheck
+caches were placed under ignored `dist` because the default user cache
+directories were not writable in the sandbox.
+Table-driven tests cover NDJSON watch output, stable observation recording,
+stdout errors, maximum context boundaries and unknown budgets, Markdown
+escaping/privacy, output paths, overwrite protection, and format conflicts.
+All eleven fuzz targets in the release guide passed 30-second runs with two
+workers, including the new context-boundary and Markdown-cell targets.
+The native preview binary reported `v0.8.0-local`. Both one-shot JSON and a
+continuous demo stream passed smoke checks; all 31 streamed lines decoded as
+versioned watch envelopes without terminal escapes, even with `--color`.
+The smoke used an isolated ledger directory.
+Local preview archives were built for Windows/amd64, Linux/amd64, and
+Linux/arm64 in `dist/v0.8.0-local`. Archive roots contained the executable,
+README, and license; Linux executables had mode 0755. All three SHA256 values
+were verified against `SHA256SUMS`; `checksums.txt` is an identical copy.
+Darwin/amd64 and Darwin/arm64 fallback cross-builds also passed with cgo off.
+These are compilation checks: native Linux/macOS execution, Unix ledger
+permissions, and the macOS Metal provider were not validated on this laptop.
+No release was published, and these uncommitted preview artifacts are not a
+five-platform release set. Historical hardware results below are unchanged.
+## Maintenance checks, 2026-10-09 (historical)
 
 On Windows 11/amd64 with Go 1.26.8, the CLI examples exercised local GGUF fit,
 Ollama and Hugging Face metadata, inferred Hub references, explicit file/revision

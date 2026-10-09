@@ -204,6 +204,7 @@ func printFit(r fitengine.Result, id string, color bool) {
 			fmt.Printf("  (%s)", signedBytes(t.CurrentSpareBytes))
 		}
 		fmt.Println()
+		fmt.Printf("    [E] max context: %s on device / %s right now (tokens)\n", contextLimit(t.MaxContextOnDevice), contextLimit(t.MaxContextNow))
 	}
 	for _, w := range r.Warnings {
 		fmt.Printf("  %s %s\n", dimc(color, "note:"), w)
@@ -212,6 +213,13 @@ func printFit(r fitengine.Result, id string, color bool) {
 		fmt.Printf("\n  prediction %s saved locally\n", id)
 	}
 	fmt.Println("  [M] measured  [R] loader-reported  [E] model-estimated  [A] assumed  [U] user-supplied")
+}
+
+func contextLimit(n *int) string {
+	if n == nil {
+		return "unknown"
+	}
+	return commas(*n)
 }
 
 func fitProvenanceBadge(p model.Provenance) string {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"math"
@@ -16,12 +17,19 @@ import (
 	"github.com/RamazanKara/vramwatch/internal/source"
 )
 
+type watchEnvelope struct {
+	SchemaVersion int            `json:"schema_version"`
+	Command       string         `json:"command"`
+	Snapshot      model.Snapshot `json:"snapshot"`
+}
+
 func cmdWatch(args []string) error {
 	fs := flag.NewFlagSet("watch", flag.ContinueOnError)
 	src := fs.String("source", "", "data source: live | demo | mock:PATH | PATH.json")
 	interval := fs.Duration("interval", time.Second, "refresh interval")
 	barWidth := fs.Int("bar-width", 48, "width of the stacked bar in cells")
 	once := fs.Bool("once", false, "render a single frame and exit (useful for captures/CI)")
+	asJSON := fs.Bool("json", false, "emit one JSON snapshot per line (NDJSON)")
 	kvType := addKVFlag(fs)
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
@@ -50,21 +58,22 @@ func cmdWatch(args []string) error {
 	opts := render.Options{Color: color, BarWidth: *barWidth}
 
 	if *once {
-		return renderFrame(context.Background(), s, opts, kvBits, false, "")
+		return renderFrame(context.Background(), s, opts, kvBits, false, "", *asJSON)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	// Hide cursor; restore on exit.
-	fmt.Print("\x1b[?25l")
-	defer fmt.Print("\x1b[?25h\n")
+	if !*asJSON {
+		fmt.Print("\x1b[?25l")
+		defer fmt.Print("\x1b[?25h\n")
+	}
 
 	footer := dimc(color, "updating every "+interval.String()+" • press Ctrl-C to quit")
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
 
-	if err := renderFrame(ctx, s, opts, kvBits, true, footer); err != nil {
+	if err := renderFrame(ctx, s, opts, kvBits, true, footer, *asJSON); err != nil {
 		return err
 	}
 	for {
@@ -72,7 +81,7 @@ func cmdWatch(args []string) error {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := renderFrame(ctx, s, opts, kvBits, true, footer); err != nil {
+			if err := renderFrame(ctx, s, opts, kvBits, true, footer, *asJSON); err != nil {
 				return err
 			}
 		}
@@ -81,25 +90,29 @@ func cmdWatch(args []string) error {
 
 // renderFrame collects one snapshot and paints it. When clear is true it first
 // clears the screen (the live loop); when false it prints in place (--once).
-func renderFrame(ctx context.Context, s source.Source, opts render.Options, kvBits int, clear bool, footer string) error {
+func renderFrame(ctx context.Context, s source.Source, opts render.Options, kvBits int, clear bool, footer string, asJSON bool) error {
 	gpus, models, err := s.Collect(ctx)
 	if err != nil {
 		return err
 	}
 	snap := engine.Build(gpus, models, engine.Options{Version: Version, Now: time.Now(), KVBits: kvBits})
+	comparison := trackWatchPrediction(snap)
+	if asJSON {
+		return json.NewEncoder(os.Stdout).Encode(watchEnvelope{SchemaVersion: 1, Command: "watch", Snapshot: snap})
+	}
 	var out string
 	if clear {
 		out = "\x1b[H\x1b[2J" // home + clear
 	}
 	out += render.Table(snap, opts)
-	if comparison := trackWatchPrediction(snap); comparison != "" {
+	if comparison != "" {
 		out += comparison + "\n"
 	}
 	if footer != "" {
 		out += "\n" + footer + "\n"
 	}
-	os.Stdout.WriteString(out)
-	return nil
+	_, err = os.Stdout.WriteString(out)
+	return err
 }
 
 type watchTrackState struct {

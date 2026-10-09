@@ -36,6 +36,17 @@ If the provider can read capacity but not current usage, `right now` is `UNKNOWN
 vramwatch does not assume an unmeasured card is empty. Run `vramwatch doctor` for
 the failing counter/provider.
 
+### How much context can I use?
+
+Run `fit` with your intended context. Each target also reports estimated maximum
+context on the device and right now. These limits include the runtime ceiling and
+safety reserve, use your `--kv-cache-type`, and stop at the model's context limit
+when known. A zero limit means even one token would exceed the budget. Unknown
+current usage produces an unknown current limit. When model metadata has no
+context limit, the estimate is memory-only; it does not establish model support
+for that context length. The existing fit verdict and exit status still apply to
+the context you requested.
+
 ### Why can a required value exceed the displayed conservative footprint?
 
 The launch verdict also includes a per-device safety reserve:
@@ -100,14 +111,19 @@ inherits directory ACLs, so keep overrides in a private directory. There is no
 telemetry service. Use `fit --no-record` to disable persistence for a
 single prediction.
 
-### Is the SVG safe to share?
+### Are SVG and Markdown reports safe to share?
 
-The SVG omits hostname, PID, PCI bus, serial number, local path, and signed URL
-query fields. It includes the human-visible GPU/model identity, quant, context,
+Both formats omit hostname, PID, PCI bus, serial number, local path, and signed URL
+query fields. They include the human-visible GPU/model identity, quant, context,
 prediction ID, and accuracy because those are the purpose of the card.
 
-The local ledger and raw `report --json` are not scrubbed; they can contain the
-original model reference and should be treated as local diagnostic data.
+Use `report --markdown --static` for reproducible text to paste into an issue.
+`--output report.md` writes a file; an existing file requires `--force`. Markdown
+escapes model/hardware text so embedded markup or newlines cannot alter the table.
+
+The local ledger, raw `report --json`, and `watch --json` are not scrubbed; they
+can contain paths and host/process identifiers and should be treated as local
+diagnostic data.
 
 ### Does vramwatch phone home?
 
@@ -142,8 +158,22 @@ mock:path.json` replays a fixture.
 
 ### What output is stable for scripts?
 
-`fit --json`, `doctor --json`, and `report --json` emit envelopes with
-`schema_version: 1`. Fit exits `0` when any target fits, `3` when the prediction is
+`fit --json`, `doctor --json`, `report --json`, and `watch --json` emit envelopes
+with `schema_version: 1`. Watch emits one object per line (NDJSON), immediately
+and then every `--interval`; `--once` emits only one. Data is on stdout and errors
+are on stderr. A watch object contains `command: "watch"` and `snapshot`, with
+the existing timestamped device/model/segment/provenance fields. For example:
+
+```sh
+vramwatch watch --source demo --once --json
+vramwatch watch --json --interval 2s > samples.ndjson
+```
+
+Fit target objects also include `max_context_on_device` and `max_context_now`
+when the respective budget is known. A present zero means no positive context
+fits; an omitted field means unknown, including records written by older versions.
+
+Fit exits `0` when any target fits, `3` when the prediction is
 valid but no target fits, `2` for command usage, and `1` for operational errors
 or an indeterminate hardware budget.
 

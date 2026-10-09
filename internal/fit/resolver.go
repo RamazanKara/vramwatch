@@ -157,7 +157,7 @@ type hfModel struct {
 func (r *resolver) resolveHF(ctx context.Context, repo string) (Artifact, error) {
 	repo = strings.Trim(repo, "/")
 	if repo == "" || !strings.Contains(repo, "/") {
-		return Artifact{}, fmt.Errorf("Hugging Face MODEL must be owner/repo")
+		return Artifact{}, fmt.Errorf("invalid Hugging Face MODEL: must be owner/repo")
 	}
 	api := "https://huggingface.co/api/models/" + escapeRepo(repo)
 	if r.opts.Revision != "" {
@@ -216,7 +216,7 @@ func (r *resolver) resolveHF(ctx context.Context, repo string) (Artifact, error)
 	var total uint64
 	for _, f := range group {
 		if f.Size == 0 {
-			return Artifact{}, fmt.Errorf("Hub did not report the size of %s; refusing an optimistic fit prediction", f.Name)
+			return Artifact{}, fmt.Errorf("model size missing from Hugging Face Hub for %s; refusing an optimistic fit prediction", f.Name)
 		}
 		total = saturatingAdd(total, f.Size)
 	}
@@ -322,7 +322,7 @@ type ollamaConfig struct {
 func (r *resolver) resolveOllama(ctx context.Context, name string) (Artifact, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return Artifact{}, fmt.Errorf("Ollama MODEL name is empty")
+		return Artifact{}, fmt.Errorf("empty Ollama MODEL name")
 	}
 	modelName, tag := splitOllama(name)
 	want := normalizeQuant(r.opts.Quant)
@@ -367,7 +367,7 @@ func (r *resolver) resolveOllama(ctx context.Context, name string) (Artifact, er
 	for _, l := range manifest.Layers {
 		if l.MediaType == "application/vnd.ollama.image.model" || strings.Contains(l.MediaType, "projector") {
 			if l.Size == 0 {
-				return Artifact{}, errors.New("Ollama manifest has an unknown model/projector layer size; refusing an optimistic fit prediction")
+				return Artifact{}, errors.New("unknown model/projector layer size in Ollama manifest; refusing an optimistic fit prediction")
 			}
 			weight = saturatingAdd(weight, l.Size)
 			if modelDigest == "" && l.MediaType == "application/vnd.ollama.image.model" {
@@ -376,7 +376,7 @@ func (r *resolver) resolveOllama(ctx context.Context, name string) (Artifact, er
 		}
 	}
 	if modelDigest == "" || weight == 0 {
-		return Artifact{}, errors.New("Ollama manifest has no model layer")
+		return Artifact{}, errors.New("no model layer in Ollama manifest")
 	}
 	base := ollamaRegistryPath(modelName)
 	blobURL := "https://registry.ollama.ai/v2/" + base + "/blobs/" + modelDigest

@@ -37,13 +37,15 @@ const (
 )
 
 type TargetResult struct {
-	Target            Target    `json:"target"`
-	FitsOnDevice      Verdict   `json:"fits_on_device"`
-	FitsNow           Verdict   `json:"fits_now"`
-	SafetyMargin      Component `json:"safety_margin"`
-	RequiredBytes     uint64    `json:"required_bytes"`
-	DeviceSpareBytes  int64     `json:"device_spare_bytes"`
-	CurrentSpareBytes int64     `json:"current_spare_bytes,omitempty"`
+	Target             Target    `json:"target"`
+	FitsOnDevice       Verdict   `json:"fits_on_device"`
+	FitsNow            Verdict   `json:"fits_now"`
+	SafetyMargin       Component `json:"safety_margin"`
+	RequiredBytes      uint64    `json:"required_bytes"`
+	DeviceSpareBytes   int64     `json:"device_spare_bytes"`
+	CurrentSpareBytes  int64     `json:"current_spare_bytes,omitempty"`
+	MaxContextOnDevice *int      `json:"max_context_on_device,omitempty"`
+	MaxContextNow      *int      `json:"max_context_now,omitempty"`
 }
 
 type Result struct {
@@ -107,6 +109,9 @@ func Predict(a Artifact, targets []Target, opts PredictOptions) (Result, error) 
 		r.Confidence = "medium"
 		r.Warnings = append(r.Warnings, "KV cache type assumed f16; declare --kv-cache-type if the loader uses a quantized cache")
 	}
+	if a.ContextMax == 0 {
+		r.Warnings = append(r.Warnings, "model context limit is unknown; maximum context estimates are memory-only")
+	}
 	contextOK := a.ContextMax == 0 || opts.Context <= a.ContextMax
 	if !contextOK {
 		r.Warnings = append(r.Warnings, fmt.Sprintf("requested context %d exceeds model context %d", opts.Context, a.ContextMax))
@@ -119,6 +124,11 @@ func Predict(a Artifact, targets []Target, opts PredictOptions) (Result, error) 
 			Target: t, FitsOnDevice: verdict(required, capacity, contextOK), DeviceSpareBytes: delta(capacity, required), RequiredBytes: required,
 			SafetyMargin: Component{Bytes: margin, Provenance: model.ProvenanceAssumed, Basis: "max(512 MiB, 5% of accelerator capacity)"},
 		}
+		fixed := saturatingAdd(saturatingAdd(a.WeightBytes, ceilingRuntime), margin)
+		if capacity > 0 {
+			limit := maxContext(a, kvType, fixed, capacity)
+			tr.MaxContextOnDevice = &limit
+		}
 		if t.AvailableKnown || t.Manual {
 			available := t.AvailableBytes
 			if t.Manual && available == 0 {
@@ -126,12 +136,37 @@ func Predict(a Artifact, targets []Target, opts PredictOptions) (Result, error) 
 			}
 			tr.FitsNow = knownVerdict(required, available, contextOK)
 			tr.CurrentSpareBytes = delta(available, required)
+			limit := maxContext(a, kvType, fixed, available)
+			tr.MaxContextNow = &limit
 		} else {
 			tr.FitsNow = VerdictUnknown
 		}
 		r.Targets = append(r.Targets, tr)
 	}
 	return r, nil
+}
+
+// Search using the forward calculation so quantized widths, rounding, and
+// overflow guards stay identical to the requested-context prediction.
+func maxContext(a Artifact, dtype string, fixed, budget uint64) int {
+	if fixed == ^uint64(0) || fixed > budget {
+		return 0
+	}
+	lo, hi := 0, int(^uint(0)>>1)
+	if a.ContextMax > 0 {
+		hi = a.ContextMax
+	}
+	for lo < hi {
+		mid := lo + (hi-lo)/2 + 1
+		kv, _ := kvBytes(a.Arch, mid, dtype)
+		required := saturatingAdd(fixed, kv)
+		if required != ^uint64(0) && required <= budget {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
+	}
+	return lo
 }
 
 func verdict(required, budget uint64, contextOK bool) Verdict {
@@ -141,7 +176,7 @@ func verdict(required, budget uint64, contextOK bool) Verdict {
 	if budget == 0 {
 		return VerdictUnknown
 	}
-	if required <= budget {
+	if required != ^uint64(0) && required <= budget {
 		return VerdictFits
 	}
 	return VerdictDoesNotFit
@@ -151,7 +186,7 @@ func knownVerdict(required, budget uint64, contextOK bool) Verdict {
 	if !contextOK {
 		return VerdictContextTooLong
 	}
-	if required <= budget {
+	if required != ^uint64(0) && required <= budget {
 		return VerdictFits
 	}
 	return VerdictDoesNotFit

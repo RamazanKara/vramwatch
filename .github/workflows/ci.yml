@@ -2,7 +2,6 @@ name: ci
 on:
   push:
   workflow_dispatch:
-
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -12,14 +11,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: lint
-        run: make fmt vet
-      - name: test
-        run: make test
-      - name: vulnerabilities
+      - name: install check tools
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
-          cd docs/gifgen && govulncheck ./...
-      - name: build
-        run: make build
+          mkdir -p dist/check-tools
+          cd dist/check-tools
+          go mod init vramwatch-check-tools
+          go get honnef.co/go/tools/cmd/staticcheck@v0.8.1 golang.org/x/tools@v0.50.0
+          go install honnef.co/go/tools/cmd/staticcheck
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: local gate
+        run: make fmt vet staticcheck test build vuln

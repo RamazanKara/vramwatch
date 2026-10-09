@@ -228,7 +228,7 @@ func processMatchesLoader(raw string, models []model.LoaderModel) bool {
 func printDoctor(checks []doctorCheck, color bool) {
 	fmt.Println(bold(color, "vramwatch doctor"))
 	for _, c := range checks {
-		mark := c.Status
+		var mark string
 		switch c.Status {
 		case "pass":
 			mark = greenc(color, "PASS")

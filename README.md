@@ -61,6 +61,12 @@ The answer has two intentionally different verdicts:
 - `right now` also accounts for memory currently in use. If live usage could not
   be measured, this verdict is `UNKNOWN` instead of assuming the card is empty.
 
+Each target also shows an estimated maximum context, both on the device and
+right now, using the same runtime ceiling, safety reserve, and chosen KV type.
+The estimate is capped by the model's context limit when known. Zero means no
+positive context fits; unknown usage leaves the current limit unknown. If model
+metadata omits its context limit, the estimate is based on memory alone.
+
 Fit is conservative. It assumes full single-accelerator residency, adds a runtime
 ceiling, and reserves `max(512 MiB, 5% of capacity)`. The output exposes every
 component and its provenance. Exit status is `0` if at least one target fits,
@@ -88,7 +94,15 @@ so a derived number never looks like a measurement:
 vramwatch watch
 vramwatch watch --kv-cache-type q8_0
 vramwatch watch --once --no-color
+vramwatch watch --once --json
+vramwatch watch --json --interval 2s > samples.ndjson
 ```
+
+`--json` emits one complete JSON object per line (NDJSON), without terminal
+controls or a footer, even with `--color`. Each object has `schema_version: 1`,
+`command: "watch"`, and a `snapshot` containing timestamps, devices, models,
+segments, and provenance. `--once --json` emits exactly one object. Stop a stream
+with Ctrl-C. JSON mode also records stable observations for accuracy reports.
 
 When a resident model matches a saved fit prediction, watch displays predicted
 versus observed memory. After three consecutive stable samples (2% tolerance), it records the
@@ -118,7 +132,7 @@ Failures include a targeted remediation and return status `1`. Warnings (for
 example, a healthy loader with no resident model) do not turn a diagnostic run
 into a failure.
 
-### `vramwatch report --svg`
+### `vramwatch report`
 
 Every `fit` invocation saves a small local prediction record unless `--no-record`
 is used. `watch` or a later `report` pairs it with a matching resident model and
@@ -131,11 +145,15 @@ vramwatch report                         # latest prediction, console
 vramwatch report --prediction ID --json   # replace ID with a fit record_id
 vramwatch report --svg                   # timestamped SVG filename
 vramwatch report --svg --output card.svg
+vramwatch report --markdown --static     # paste into an issue or discussion
+vramwatch report --markdown --output report.md
 ```
 
-The SVG is designed to share: it omits hostnames, PIDs, bus IDs, serial numbers,
+SVG and Markdown are designed to share: they omit hostnames, PIDs, bus IDs, serial numbers,
 local paths, and URL query strings. `--static` removes the timestamp for
 reproducible output. Existing files are protected unless `--force` is supplied.
+Markdown defaults to stdout; both formats accept `--output -` for stdout.
+Choose one of `--json`, `--svg`, or `--markdown` per invocation.
 
 <p align="center"><img src="docs/sample/vramwatch-card.svg" alt="vramwatch prediction accuracy report" width="680"></p>
 
@@ -146,13 +164,13 @@ go install github.com/RamazanKara/vramwatch/cmd/vramwatch@latest
 ```
 
 A [shell installer](install.sh) is also available for Linux and macOS.
-Windows users can use `go install` with Go 1.26.8 or newer. Existing archives
+Windows users can use `go install` with Go 1.27.2 or newer. Existing archives
 are listed under [Releases](https://github.com/RamazanKara/vramwatch/releases).
 The v0.7.1 Windows binary was built with Go 1.26.3; its scan flags
 standard-library advisories, including [GO-2026-6218](https://pkg.go.dev/vuln/GO-2026-6218).
 Use a current source build until updated release archives are published.
 The v0.7.1 release includes Linux amd64/arm64, Windows amd64, and macOS
-amd64/arm64 archives. The release workflow uses native macOS runners to link Metal;
+amd64/arm64 archives. macOS release builds must run natively to link Metal;
 native macOS execution is not part of the local Windows validation.
 
 ## What is supported
@@ -209,9 +227,9 @@ files under the platform state directory:
 Set `VRAMWATCH_STATE_DIR` to override this location. Unix prediction directories
 and files use modes 0700 and 0600. Windows inherits directory ACLs; use a private
 directory when overriding the default. Records can include the model
-reference you supplied, including a local path or URL; they stay local. SVG output
-is scrubbed as described above. Raw `report --json` is intended for local
-automation and is not privacy-scrubbed.
+reference you supplied, including a local path or URL; they stay local. SVG and
+Markdown output are scrubbed as described above. Raw `report --json` and
+`watch --json` are intended for local automation and are not privacy-scrubbed.
 
 Live watch/doctor query local drivers and the configured loader endpoints
 (`OLLAMA_HOST` and `LLAMACPP_HOST`, defaulting to loopback). Remote `fit`
@@ -251,20 +269,21 @@ Invoking an old name returns a migration message and usage status `2`.
 
 ## Development
 
+Install the check tools as described in [the release guide](docs/RELEASING.md#gate), then run the local targets below.
+
 ```sh
-make fmt
-make vet
-make build
-make test   # includes Go's race detector; requires a C compiler
+make fmt vet staticcheck test build vuln
 make card   # regenerate the deterministic SVG above
 make gif    # regenerate the animated README walkthrough
 ```
 
-Use Go 1.26.8 or newer. The make targets need Git, GNU make, and a POSIX shell;
+Use Go 1.27.2 or newer. The make targets need Git, GNU make, and a POSIX shell;
 on Windows, use a compatible toolchain or WSL. GitHub Actions is currently
-unavailable because of billing, so the local gate is `make fmt vet test build`.
-The single CI workflow runs the same gate on push or manual dispatch; tag releases
-remain separate.
+unavailable because of billing, so the local gate above is authoritative. Tests,
+vet, Staticcheck, and govulncheck cover both Go modules. Tests use `-race` when
+cgo is enabled, otherwise they print a skip notice. The single CI workflow runs
+the same gate on push or manual dispatch. See [local release preparation](docs/RELEASING.md)
+for builds, native macOS checks, and `SHA256SUMS`; publication is a separate manual step.
 
 The CLI module has no third-party Go dependencies. The standalone `docs/gifgen`
 module uses `golang.org/x/image`. Provider parsing, prediction,

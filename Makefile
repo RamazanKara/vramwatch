@@ -3,21 +3,33 @@ PKG     := ./cmd/vramwatch
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -ldflags "-X main.Version=$(VERSION)"
 
-.PHONY: build test vet fmt tidy run watch demo card gif clean
+.PHONY: build test vet staticcheck vuln fmt tidy run watch demo card gif clean
 
 build: ## build the CLI
 	go build $(LDFLAGS) -o $(BINARY) $(PKG)
 
 test: ## run the test suite
 	@if [ "$$(go env CGO_ENABLED)" = "1" ]; then \
-		go test -race -timeout=60s ./...; \
+		race=-race; \
 	else \
 		printf '%s\n' 'CGO disabled: running tests without -race'; \
-		go test -timeout=60s ./...; \
-	fi
+		race=; \
+	fi; \
+	for module in . docs/gifgen; do \
+		(cd "$$module" && go test $$race -timeout=60s ./...) || exit $$?; \
+	done
 
 vet:
 	go vet ./...
+	cd docs/gifgen && go vet ./...
+
+staticcheck:
+	staticcheck ./...
+	cd docs/gifgen && staticcheck ./...
+
+vuln:
+	govulncheck ./...
+	cd docs/gifgen && govulncheck ./...
 
 fmt: ## check formatting (fails if any file needs gofmt)
 	@files="$$(gofmt -l $$(git ls-files -co --exclude-standard '*.go'))" || exit 1; \

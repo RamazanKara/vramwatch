@@ -22,7 +22,7 @@ COMMANDS
   fit        Predict whether a model + quant + context fits before downloading it
   watch      Live VRAM attribution with explicit measured/estimated provenance
   doctor     Diagnose drivers, runtimes, loaders, permissions, and GPU detection
-  report     One-shot console/JSON report or privacy-safe SVG accuracy card
+  report     Console/JSON report or privacy-safe SVG/Markdown accuracy report
   version    Print version information
   help       Show this help
 

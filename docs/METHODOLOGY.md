@@ -145,6 +145,15 @@ sample is distinct and returns `does_not_fit`. If requested context exceeds the
 GGUF's trained context, the verdict is `context_unsupported` even if the byte
 budget would fit.
 
+The maximum-context estimates solve the same inequality for the largest integer
+context, separately for capacity and current availability. They retain weights,
+the runtime ceiling, and the capacity-based safety margin, and use the same
+whole-cache rounding for quantized KV types. A known trained-context limit caps
+both results. With no trained limit, these are memory-only estimates, not a claim
+that the model supports arbitrarily long contexts. An unknown budget has no
+estimate; zero means no positive context fits. These estimates do not change the
+verdict for the requested context or the `conservative-v1` policy.
+
 All prediction additions and multiplications saturate on overflow. Hostile or
 implausibly large metadata therefore becomes “does not fit,” never a wrapped small
 number.

@@ -35,12 +35,13 @@ func cmdReport(args []string) error {
 	predictionID := fs.String("prediction", "", "prediction ledger ID (default latest)")
 	asJSON := fs.Bool("json", false, "print stable machine-readable JSON")
 	asSVG := fs.Bool("svg", false, "write a shareable SVG card")
+	asMarkdown := fs.Bool("markdown", false, "print a shareable Markdown report")
 	output := fs.String("output", "", "output path ('-' for stdout)")
 	force := fs.Bool("force", false, "replace an existing output file")
 	static := fs.Bool("static", false, "omit the live timestamp for deterministic output")
 	cf := addColorFlags(fs)
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "vramwatch report [--svg] [--prediction ID]\n\nFLAGS")
+		fmt.Fprintln(os.Stderr, "vramwatch report [--json | --svg | --markdown] [--prediction ID]\n\nFLAGS")
 		fs.PrintDefaults()
 	}
 	if err := parseFlags(fs, args); err != nil {
@@ -49,14 +50,14 @@ func cmdReport(args []string) error {
 	if fs.NArg() != 0 {
 		return &usageError{fmt.Errorf("report takes no positional arguments")}
 	}
-	if *asJSON && *asSVG {
-		return &usageError{fmt.Errorf("--json and --svg are mutually exclusive")}
+	if (*asJSON && *asSVG) || (*asJSON && *asMarkdown) || (*asSVG && *asMarkdown) {
+		return &usageError{fmt.Errorf("--json, --svg, and --markdown are mutually exclusive")}
 	}
-	if *output != "" && !*asSVG {
-		return &usageError{fmt.Errorf("--output requires --svg")}
+	if *output != "" && !*asSVG && !*asMarkdown {
+		return &usageError{fmt.Errorf("--output requires --svg or --markdown")}
 	}
-	if *force && !*asSVG {
-		return &usageError{fmt.Errorf("--force requires --svg")}
+	if *force && !*asSVG && !*asMarkdown {
+		return &usageError{fmt.Errorf("--force requires --svg or --markdown")}
 	}
 	var rec ledger.Record
 	var err error
@@ -89,17 +90,20 @@ func cmdReport(args []string) error {
 		return nil
 	}
 	card := cardFromReport(rec, hw, *static)
-	if *asSVG {
-		svg := render.ReportSVG(card)
+	if *asSVG || *asMarkdown {
+		data := render.ReportMarkdown(card)
 		dest := *output
-		if dest == "" {
-			dest = "vramwatch-report-" + time.Now().Format("20060102-150405") + ".svg"
+		if *asSVG {
+			data = render.ReportSVG(card) + "\n"
+			if dest == "" {
+				dest = "vramwatch-report-" + time.Now().Format("20060102-150405") + ".svg"
+			}
 		}
-		if dest == "-" {
-			fmt.Println(svg)
-			return nil
+		if dest == "-" || dest == "" {
+			_, err := os.Stdout.WriteString(data)
+			return err
 		}
-		if err := writeReportSVG(dest, svg+"\n", *force); err != nil {
+		if err := writeReport(dest, data, *force); err != nil {
 			return err
 		}
 		abs, _ := filepath.Abs(dest)
@@ -110,7 +114,7 @@ func cmdReport(args []string) error {
 	return nil
 }
 
-func writeReportSVG(path, data string, force bool) error {
+func writeReport(path, data string, force bool) error {
 	if force {
 		dir := filepath.Dir(path)
 		f, err := os.CreateTemp(dir, ".vramwatch-report-*.tmp")

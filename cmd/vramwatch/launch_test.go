@@ -183,19 +183,19 @@ func TestReportCardUsesTheTargetThatProducedItsStatus(t *testing.T) {
 	}
 }
 
-func TestWriteReportSVGDoesNotOverwriteWithoutForce(t *testing.T) {
+func TestWriteReportDoesNotOverwriteWithoutForce(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "report.svg")
-	if err := writeReportSVG(path, "first", false); err != nil {
+	if err := writeReport(path, "first", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeReportSVG(path, "second", false); err == nil {
+	if err := writeReport(path, "second", false); err == nil {
 		t.Error("second write without --force should fail")
 	}
 	b, _ := os.ReadFile(path)
 	if string(b) != "first" {
 		t.Fatalf("failed write changed existing report to %q", b)
 	}
-	if err := writeReportSVG(path, "second", true); err != nil {
+	if err := writeReport(path, "second", true); err != nil {
 		t.Fatal(err)
 	}
 	b, _ = os.ReadFile(path)

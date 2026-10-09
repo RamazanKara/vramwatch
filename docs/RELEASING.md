@@ -2,23 +2,36 @@
 
 GitHub Actions is currently unavailable. Run the local gate and build the release
 artifacts below from the same commit on every build machine. There is no
-`make release` target; `make build VERSION=v0.7.2` builds only the host binary.
-The next patch release is `v0.7.2`; keep its notes under `[Unreleased]` until release.
+`make release` target; `make build VERSION=v0.8.0` builds only the host binary.
+The examples use `v0.8.0` for this feature release; keep its notes under
+`[Unreleased]` until release. For an uncommitted local preview, use a separate
+version such as `v0.8.0-local` and keep those artifacts separate from a release.
 
 ## Gate
 
-Use Go 1.27.2 or newer (both CI workflows take the version from `go.mod`). Check
+Use Go 1.27.2 or newer (the single CI workflow takes the version from `go.mod`). Check
 [Go releases](https://go.dev/dl/) and the vulnerability database again on release
 day. The CLI has no third-party modules; `docs/gifgen` is a separate module.
+
+Staticcheck v0.8.1 needs the newer x/tools export-data reader for Go 1.27. The
+commands below build it in a separate, ignored module with x/tools v0.50.0;
+this adds no dependencies to vramwatch. Ensure your Go binary directory
+(`go env GOBIN`, or `$(go env GOPATH)/bin` when unset) is on PATH.
 
 With GNU make, a POSIX shell, and a C compiler:
 
 ```sh
+set -eu
 export GOTOOLCHAIN=$(go env GOVERSION)
-make fmt vet test build VERSION=v0.7.2
-go install golang.org/x/vuln/cmd/govulncheck@latest
-govulncheck ./...
-(cd docs/gifgen && go test ./... && go vet ./... && govulncheck ./...)
+mkdir -p dist/check-tools
+(
+    cd dist/check-tools
+    test -f go.mod || go mod init vramwatch-check-tools
+    go get honnef.co/go/tools/cmd/staticcheck@v0.8.1 golang.org/x/tools@v0.50.0
+    go install honnef.co/go/tools/cmd/staticcheck
+)
+go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+make fmt vet staticcheck test build vuln VERSION=v0.8.0
 ```
 
 On Windows without make or a C compiler, use PowerShell 7.3+:
@@ -33,14 +46,23 @@ $files = @(git ls-files -co --exclude-standard '*.go')
 if (gofmt -l $files) { throw 'Run gofmt -w on the listed files' }
 go vet ./...
 go test -count=1 -timeout=60s ./...
-go build -ldflags '-X main.Version=v0.7.2' -o dist/vramwatch.exe ./cmd/vramwatch
-go install golang.org/x/vuln/cmd/govulncheck@latest
-& "$(go env GOPATH)/bin/govulncheck.exe" ./...
+go build -ldflags '-X main.Version=v0.8.0' -o dist/vramwatch.exe ./cmd/vramwatch
+New-Item -ItemType Directory -Path dist/check-tools -Force | Out-Null
+Push-Location dist/check-tools
+try {
+    if (-not (Test-Path go.mod)) { go mod init vramwatch-check-tools }
+    go get honnef.co/go/tools/cmd/staticcheck@v0.8.1 golang.org/x/tools@v0.50.0
+    go install honnef.co/go/tools/cmd/staticcheck
+} finally { Pop-Location }
+go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+staticcheck ./...
+govulncheck ./...
 Push-Location docs/gifgen
 try {
     go test ./...
     go vet ./...
-    & "$(go env GOPATH)/bin/govulncheck.exe" ./...
+    staticcheck ./...
+    govulncheck ./...
 } finally { Pop-Location }
 ```
 
@@ -66,6 +88,8 @@ go test ./internal/loader -run='^$' -fuzz='^FuzzOllamaMetadata$' -fuzztime=30s -
 go test ./internal/loader -run='^$' -fuzz='^FuzzLlamaProps$' -fuzztime=30s -parallel=2
 go test ./internal/fit -run='^$' -fuzz='^FuzzArtifactReferences$' -fuzztime=30s -parallel=2
 go test ./cmd/vramwatch -run='^$' -fuzz='^FuzzParseByteSize$' -fuzztime=30s -parallel=2
+go test ./internal/fit -run='^$' -fuzz='^FuzzMaxContext$' -fuzztime=30s -parallel=2
+go test ./internal/render -run='^$' -fuzz='^FuzzMarkdownCell$' -fuzztime=30s -parallel=2
 ```
 
 ## Windows and Linux archives
@@ -83,7 +107,7 @@ Linux binaries executable when packaged on Windows:
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $env:PATH = "C:\Program Files\Git\usr\bin;$env:PATH"
-$Version = 'v0.7.2'
+$Version = 'v0.8.0'
 $releaseDir = "dist/$Version"
 New-Item -ItemType Directory -Path $releaseDir | Out-Null
 $env:CGO_ENABLED = '0'
@@ -122,7 +146,7 @@ check out the same release commit and run this in a POSIX shell:
 
 ```sh
 set -eu
-VERSION=v0.7.2
+VERSION=v0.8.0
 ARCH=$(go env GOHOSTARCH)
 STAGE=$(mktemp -d)
 export CGO_ENABLED=1 GOOS=darwin GOARCH="$ARCH"
@@ -163,13 +187,19 @@ Publish both `SHA256SUMS` and the identical `checksums.txt`: existing installers
 fetch the latter. On Linux, verify downloaded archives with
 `sha256sum --check SHA256SUMS`; on macOS use `shasum -a 256 --check SHA256SUMS`.
 
-Only when the gate, native checks, archives, and notes have been reviewed, use
-[GitHub CLI release create](https://cli.github.com/manual/gh_release_create).
-The tag must already exist on GitHub and identify the exact build commit.
-Copy the release's changelog section to `dist/v0.7.2-notes.md`, then run:
+On Windows, verify a downloaded set without external tools:
 
 ```powershell
-gh release create $Version @assets "$releaseDir/SHA256SUMS" "$releaseDir/checksums.txt" --title $Version --notes-file "dist/$Version-notes.md" --verify-tag
+foreach ($line in Get-Content "$releaseDir/SHA256SUMS") {
+    $expected, $name = $line -split '  ', 2
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath "$releaseDir/$name").Hash
+    if ($actual -ine $expected) { throw "Checksum mismatch: $name" }
+}
 ```
 
-Do not upload the staging directories or unrelated contents of `dist`.
+Publication is a separate maintainer action after reviewing the gate, native
+checks, archives, and changelog. Use the GitHub release page with a tag identifying
+the exact build commit, attach the five archives and both checksum files, and
+copy the release's changelog section into the release notes. There is no automatic
+tag-publishing workflow. Do not upload staging directories, local-preview builds,
+or unrelated contents of `dist`.
