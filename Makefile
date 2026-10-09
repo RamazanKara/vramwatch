@@ -9,7 +9,12 @@ build: ## build the CLI
 	go build $(LDFLAGS) -o $(BINARY) $(PKG)
 
 test: ## run the test suite
-	go test -race ./...
+	@if [ "$$(go env CGO_ENABLED)" = "1" ]; then \
+		go test -race -timeout=60s ./...; \
+	else \
+		printf '%s\n' 'CGO disabled: running tests without -race'; \
+		go test -timeout=60s ./...; \
+	fi
 
 vet:
 	go vet ./...

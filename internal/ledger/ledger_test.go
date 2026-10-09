@@ -7,6 +7,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/RamazanKara/vramwatch/internal/fit"
 	"github.com/RamazanKara/vramwatch/internal/model"
@@ -45,6 +46,10 @@ func TestSaveLoadLatestAndObservation(t *testing.T) {
 	}
 	if loaded.Loader != "ollama" || loaded.Prediction.ExpectedFootprintBytes != 10*model.GiB {
 		t.Fatalf("loaded record = %+v", loaded)
+	}
+	second.CreatedAt = first.CreatedAt.Add(time.Second)
+	if err := write(second); err != nil {
+		t.Fatal(err)
 	}
 	latest, err := Latest()
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/RamazanKara/vramwatch/internal/engine"
@@ -60,23 +61,24 @@ func TestDemoAttribution(t *testing.T) {
 		{"near limit", 22 * time.Second, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, err := FromSpec("demo")
-			if err != nil {
-				t.Fatal(err)
-			}
-			demo := s.(Demo)
-			demo.Start = time.Now().Add(-tc.elapsed)
-			gpus, models, err := demo.Collect(context.Background())
-			if err != nil || len(gpus) != 1 || len(models) != 1 {
-				t.Fatalf("demo shape = %v, %v, %v", gpus, models, err)
-			}
-			if gpus[0].UsedBytes+gpus[0].FreeBytes != gpus[0].TotalBytes || gpus[0].UsageSource != model.ProvenanceAssumed || models[0].VRAMSource != model.ProvenanceAssumed {
-				t.Fatalf("synthetic memory/provenance = %+v, %+v", gpus[0], models[0])
-			}
-			snap := engine.Build(gpus, models, engine.Options{})
-			if got := snap.Breakdowns[0].Prediction.OOMRisk; got != tc.oom {
-				t.Errorf("OOM risk = %v, want %v", got, tc.oom)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				s, err := FromSpec("demo")
+				if err != nil {
+					t.Fatal(err)
+				}
+				time.Sleep(tc.elapsed)
+				gpus, models, err := s.Collect(context.Background())
+				if err != nil || len(gpus) != 1 || len(models) != 1 {
+					t.Fatalf("demo shape = %v, %v, %v", gpus, models, err)
+				}
+				if gpus[0].UsedBytes+gpus[0].FreeBytes != gpus[0].TotalBytes || gpus[0].UsageSource != model.ProvenanceAssumed || models[0].VRAMSource != model.ProvenanceAssumed {
+					t.Fatalf("synthetic memory/provenance = %+v, %+v", gpus[0], models[0])
+				}
+				snap := engine.Build(gpus, models, engine.Options{})
+				if got := snap.Breakdowns[0].Prediction.OOMRisk; got != tc.oom {
+					t.Errorf("OOM risk = %v, want %v", got, tc.oom)
+				}
+			})
 		})
 	}
 }

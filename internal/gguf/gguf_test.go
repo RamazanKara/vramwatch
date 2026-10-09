@@ -193,18 +193,15 @@ func validGGUFBytes() []byte {
 	return hdr.Bytes()
 }
 
-// FuzzReadGGUF asserts Read never panics on arbitrary (truncated/hostile) input.
+// FuzzReadGGUF exercises full and ranged metadata parsing with hostile input.
 func FuzzReadGGUF(f *testing.F) {
 	f.Add(validGGUFBytes())
 	f.Add([]byte("GGUF"))
 	f.Add([]byte("GGUF\x03\x00\x00\x00"))
 	f.Add([]byte{})
 	f.Fuzz(func(t *testing.T, data []byte) {
-		p := filepath.Join(t.TempDir(), "f.gguf")
-		if err := os.WriteFile(p, data, 0o644); err != nil {
-			t.Skip()
-		}
-		_, _ = Read(p) // must return, never panic
+		_, _ = readFrom(bytes.NewReader(data), uint64(len(data)), false)
+		_, _ = ReadPrefix(data, uint64(len(data)))
 	})
 }
 

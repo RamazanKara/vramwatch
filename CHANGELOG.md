@@ -6,6 +6,26 @@ follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Require Go 1.27.2 for the CLI, CI, and standalone GIF generator, incorporating
+  the current standard-library security fixes. Check both modules with
+  `govulncheck` in CI.
+
+### Fixed
+
+- Make demo timing and ledger ordering tests deterministic, close test pipe
+  readers, and isolate report tests from live GPU tools and loader endpoints.
+- Run the local test gate without `-race` when cgo is disabled, with an explicit
+  notice and a bounded test timeout; cgo-enabled gates retain race detection.
+
+### Testing and release
+
+- Fuzz GGUF headers in memory and add small seeds for GPU output, loader metadata,
+  artifact references, and CLI byte-size parsing.
+- Document local cross-platform builds, native macOS Metal builds, SHA-256
+  checksums, and manual release publication in `docs/RELEASING.md`.
+
 ## [0.7.1] - 2026-10-07
 
 ### Fixed

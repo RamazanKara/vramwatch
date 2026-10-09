@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,8 +206,11 @@ func TestWriteReportSVGDoesNotOverwriteWithoutForce(t *testing.T) {
 
 func TestCmdReportSVGFromLedger(t *testing.T) {
 	t.Setenv("VRAMWATCH_STATE_DIR", t.TempDir())
-	t.Setenv("OLLAMA_HOST", "http://127.0.0.1:1")
-	t.Setenv("LLAMACPP_HOST", "http://127.0.0.1:1")
+	t.Setenv("PATH", t.TempDir())
+	srv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	t.Setenv("OLLAMA_HOST", srv.URL)
+	t.Setenv("LLAMACPP_HOST", srv.URL)
 	result := fitengine.Result{
 		Policy:   fitengine.PolicyVersion,
 		Artifact: fitengine.Artifact{Source: fitengine.SourceLocal, CanonicalID: `/private/alice/model-Q4_K_M.gguf`, Filename: "model-Q4_K_M.gguf", Quantization: "Q4_K_M"},

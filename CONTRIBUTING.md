@@ -9,15 +9,17 @@ attribution.
 ```sh
 git clone https://github.com/RamazanKara/vramwatch
 cd vramwatch
-make fmt vet test      # format check, vet, and race-enabled tests
+make fmt vet test      # format check, vet, and tests (race-enabled with cgo)
 make build             # build ./vramwatch
 make demo              # live TUI against the synthetic demo source
 make gif               # regenerate the animated README walkthrough
 ```
 
-Use Go 1.26.8 or newer, Git, GNU make, a POSIX shell, and a C compiler for `-race`.
+Use Go 1.27.2 or newer, Git, GNU make, a POSIX shell, and a C compiler for `-race`.
+Without cgo, `make test` reports the skipped race check and runs normal tests.
 Windows can use a compatible native toolchain or WSL. Go sources use LF line
-endings for `gofmt` on every platform.
+endings for `gofmt` on every platform. See [RELEASING.md](docs/RELEASING.md) for
+PowerShell gate commands, fuzz runs, and local release instructions.
 
 The shipped module has **no third-party Go dependencies** and should stay that
 way: the value proposition is one binary with no language runtime or package
@@ -28,7 +30,7 @@ Apple's system Foundation/Metal frameworks.
 
 ## Ground rules
 
-- `make fmt vet test build` must pass locally. `make test` includes `-race`.
+- `make fmt vet test build` must pass locally. `make test` includes `-race` when cgo is enabled.
   The single push/manual CI workflow runs these targets, but GitHub Actions is
   currently unavailable because of billing; its badge is not a validation gate.
 - Parsing logic (vendor CLI output, loader JSON) must be a **pure function**

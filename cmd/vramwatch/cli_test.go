@@ -152,9 +152,13 @@ func TestResolveKVBits(t *testing.T) {
 
 func TestCmdHelpReturnsErrHelp(t *testing.T) {
 	old := os.Stderr
-	_, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
 	os.Stderr = w
-	err := cmdWatch([]string{"--help"})
+	err = cmdWatch([]string{"--help"})
 	w.Close()
 	os.Stderr = old
 	if !errors.Is(err, flag.ErrHelp) {
@@ -164,9 +168,13 @@ func TestCmdHelpReturnsErrHelp(t *testing.T) {
 
 func TestCmdBadFlagIsUsageError(t *testing.T) {
 	old := os.Stderr
-	_, w, _ := os.Pipe()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
 	os.Stderr = w
-	err := cmdWatch([]string{"--nope"})
+	err = cmdWatch([]string{"--nope"})
 	w.Close()
 	os.Stderr = old
 	var ue *usageError
